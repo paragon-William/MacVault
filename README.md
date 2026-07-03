@@ -1,3 +1,4 @@
+![MacVault](macvault.jpeg)
 # MacVault
 
 An encrypted disk image vault for macOS that hides files behind an AES-256 encrypted APFS volume, disguised with system-like filenames and managed by a background LaunchDaemon.
