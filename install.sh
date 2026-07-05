@@ -5,81 +5,75 @@
 # ============================================================
 set -euo pipefail
 
-# ── Colours ──
-C_RESET='\033[0m'
-C_BOLD='\033[1m'
-C_DIM='\033[2m'
-C_RED='\033[91m'
-C_GREEN='\033[92m'
-C_YELLOW='\033[93m'
-C_BLUE='\033[94m'
-C_CYAN='\033[96m'
-
 REPO="https://github.com/paragon-William/MacVault.git"
 DEST="${1:-$HOME/.local/bin}"
 NAME="${2:-mvs}"
 TMPDIR="$(mktemp -d /tmp/_macvault_XXXXXX)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
-# ── Progress bar ──
+# ── Colours ──
+BOLD='\033[1m'
+DIM='\033[2m'
+GREEN='\033[92m'
+CYAN='\033[96m'
+RESET='\033[0m'
+
 progress() {
-    local current="$1"
-    local total="$2"
-    local desc="$3"
+    local current="$1" total="$2" desc="$3"
     local percent=$(( current * 100 / total ))
     local filled=$(( percent / 2 ))
     local empty=$(( 50 - filled ))
-    printf "\r  ${C_CYAN}[%s]${C_RESET} ${C_BOLD}%s${C_RESET}" \
-        "$(printf '#%.0s' $(seq 1 $filled))$(printf ' %.0s' $(seq 1 $empty))" \
-        "$desc"
+    local bar
+    bar=$(printf '%*s' "$filled" '' | tr ' ' '#')
+    local space
+    space=$(printf '%*s' "$empty" '' | tr ' ' ' ')
+    printf "\r  [%b%s%b%s%b] %s" "$GREEN" "$bar" "$RESET" "$space" "$RESET" "$desc"
 }
 
-echo ""
-echo -e "${C_BOLD}${C_GREEN}  MacVault Installer${C_RESET}"
-echo -e "${C_DIM}  https://github.com/paragon-William/MacVault${C_RESET}"
-echo ""
+clear_line() {
+    printf "\r  [%b##################################################%b] %bDone%b\n" "$GREEN" "$RESET" "$GREEN" "$RESET"
+}
 
-# Step 1/4: Clone
+printf "\n%b  MacVault Installer%b\n" "$BOLD$GREEN" "$RESET"
+printf "%b  https://github.com/paragon-William/MacVault%b\n\n" "$DIM" "$RESET"
+
+# Step 1/4
 progress 1 4 "Cloning repository..."
 git clone --depth 1 "$REPO" "$TMPDIR" &>/dev/null
-echo -e "\r  ${C_GREEN}[##################################################]${C_RESET} ${C_GREEN}Done${C_RESET}"
+clear_line
 
 cd "$TMPDIR"
 
 if [ ! -f build/install ]; then
-    echo ""
-    echo -e "  ${C_RED}[!] build/install not found in repo.${C_RESET}"
+    printf "\n  [!] build/install not found in repo.\n"
     exit 1
 fi
 
 chmod +x build/install build/mvs 2>/dev/null || true
 
-# Step 2/4: Verify
+# Step 2/4
 progress 2 4 "Verifying source files..."
-sleep 0.3
-echo -e "\r  ${C_GREEN}[##################################################]${C_RESET} ${C_GREEN}Done${C_RESET}"
+sleep 0.2
+clear_line
 
-# Step 3/4: Install
-progress 3 4 "Installing ${C_BOLD}${NAME}${C_RESET} to ${C_DIM}${DEST}${C_RESET}..."
+# Step 3/4
+progress 3 4 "Installing mvs to ${DEST}..."
 bash build/install "$@" &>/dev/null
-sleep 0.3
-echo -e "\r  ${C_GREEN}[##################################################]${C_RESET} ${C_GREEN}Done${C_RESET}"
+sleep 0.2
+clear_line
 
-# Step 4/4: Finalise
+# Step 4/4
 progress 4 4 "Finalising..."
-sleep 0.3
-echo -e "\r  ${C_GREEN}[##################################################]${C_RESET} ${C_GREEN}Done${C_RESET}"
+sleep 0.2
+clear_line
 
-echo ""
-echo -e "  ${C_GREEN}${C_BOLD}Congratulations! MacVault is installed.${C_RESET}"
-echo ""
-echo -e "  ${C_BOLD}Usage:${C_RESET}"
-echo -e "    ${C_CYAN}${NAME}${C_RESET} init       ${C_DIM}# create a new encrypted store${C_RESET}"
-echo -e "    ${C_CYAN}${NAME}${C_RESET} open       ${C_DIM}# unlock and mount${C_RESET}"
-echo -e "    ${C_CYAN}${NAME}${C_RESET} add        ${C_DIM}# move files into the store${C_RESET}"
-echo -e "    ${C_CYAN}${NAME}${C_RESET} show       ${C_DIM}# restore files to origin${C_RESET}"
-echo -e "    ${C_CYAN}${NAME}${C_RESET} hide       ${C_DIM}# instant re-hide${C_RESET}"
-echo -e "    ${C_CYAN}${NAME}${C_RESET} close      ${C_DIM}# lock it all up${C_RESET}"
-echo ""
-echo -e "  ${C_DIM}Prefix commands with a space to keep them out of history.${C_RESET}"
+printf "\n  %bCongratulations! MacVault is installed.%b\n\n" "$GREEN$BOLD" "$RESET"
+printf "  %bUsage:%b\n" "$BOLD" "$RESET"
+printf "    %bmvs%b init       %b# create a new encrypted store%b\n" "$CYAN" "$RESET" "$DIM" "$RESET"
+printf "    %bmvs%b open       %b# unlock and mount%b\n" "$CYAN" "$RESET" "$DIM" "$RESET"
+printf "    %bmvs%b add        %b# move files into the store%b\n" "$CYAN" "$RESET" "$DIM" "$RESET"
+printf "    %bmvs%b show       %b# restore files to origin%b\n" "$CYAN" "$RESET" "$DIM" "$RESET"
+printf "    %bmvs%b hide       %b# instant re-hide%b\n" "$CYAN" "$RESET" "$DIM" "$RESET"
+printf "    %bmvs%b close      %b# lock it all up%b\n" "$CYAN" "$RESET" "$DIM" "$RESET"
+printf "\n  %bPrefix commands with a space to keep them out of history.%b\n" "$DIM" "$RESET"
 echo ""
