@@ -22,28 +22,34 @@ echo "  ${BOLD}${GREEN}MacVault Installer${RESET}"
 echo "  ${DIM}https://github.com/paragon-William/MacVault${RESET}"
 echo ""
 
+# ── Step 1: Clone ─────────────────────────────────────────
 echo "  ${DIM}Cloning repository...${RESET}"
 git clone --depth 1 "$REPO" "$TMPDIR" &>/dev/null
 echo "  ${GREEN}Done.${RESET}"
 
 cd "$TMPDIR"
 
-if [ ! -f build/install ]; then
-    echo "  [!] build/install not found in repo."
+if [ ! -f build/mvs ]; then
+    echo "  [!] build/mvs not found in repo."
     exit 1
 fi
 
-chmod +x build/install build/mvs 2>/dev/null || true
+chmod +x build/mvs 2>/dev/null || true
 
+# ── Step 2: Verify ────────────────────────────────────────
 echo "  ${DIM}Verifying source files...${RESET}"
 sleep 0.2
 echo "  ${GREEN}Done.${RESET}"
 
+# ── Step 3: Install ───────────────────────────────────────
 echo "  ${DIM}Installing ${NAME} to ${DEST}...${RESET}"
-bash build/install "$@" &>/dev/null
+mkdir -p "$DEST"
+cp build/mvs "$DEST/$NAME"
+chmod +x "$DEST/$NAME"
 sleep 0.2
 echo "  ${GREEN}Done.${RESET}"
 
+# ── Step 4: Finalise ──────────────────────────────────────
 echo "  ${DIM}Finalising...${RESET}"
 sleep 0.2
 echo "  ${GREEN}Done.${RESET}"
@@ -52,6 +58,21 @@ echo ""
 echo "  ${GREEN}${BOLD}Congratulations! MacVault is installed.${RESET}"
 echo ""
 echo "  ${BOLD}Usage:${RESET}"
+echo ""
+echo "  ${BOLD}Mode 1 — Run by full path (no PATH changes needed):${RESET}"
+echo "    ${CYAN}${DEST}/${NAME}${RESET} init"
+echo "    ${CYAN}${DEST}/${NAME}${RESET} open"
+echo ""
+echo "  ${BOLD}Mode 2 — Add to PATH for this session only:${RESET}"
+echo "    ${CYAN}export PATH=\"${DEST}:\$PATH\"${RESET}"
+echo "    ${CYAN}${NAME}${RESET} init"
+echo ""
+echo "  ${BOLD}Mode 3 — Permanent PATH (adds to ~/.zshrc):${RESET}"
+echo "    ${CYAN}echo 'export PATH=\"${DEST}:\$PATH\"' >> ~/.zshrc${RESET}"
+echo "    ${CYAN}source ~/.zshrc${RESET}"
+echo "    ${CYAN}${NAME}${RESET} init"
+echo ""
+echo "  ${BOLD}Quick reference:${RESET}"
 echo "    ${CYAN}${NAME}${RESET} init       # create a new encrypted store"
 echo "    ${CYAN}${NAME}${RESET} open       # unlock and mount"
 echo "    ${CYAN}${NAME}${RESET} add        # move files into the store"
