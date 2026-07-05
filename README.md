@@ -5,7 +5,7 @@ A portable encrypted file store for macOS. AES-256 at every layer. Zero trace wh
 
 ## Install
 
-```bash
+~~~bash
 # One-liner (clones repo, installs `mvs` to ~/.local/bin)
 curl -sL https://raw.githubusercontent.com/paragon-William/MacVault/main/install.sh | bash
 
@@ -15,13 +15,13 @@ curl -sL https://raw.githubusercontent.com/paragon-William/MacVault/main/install
 # Or clone manually
 git clone https://github.com/paragon-William/MacVault.git
 cd MacVault && bash build/install
-```
+~~~
 
 Requires only `python3`, `openssl`, and `git` — all included with macOS.
 
 ## Quick start
 
-```bash
+~~~bash
 mvs init                        # creates ~/.local/share/mvs/<random>.sparsebundle
 mvs open                        # prompts for passphrase, mounts
 mvs add ~/Documents/tax.pdf     # move a file into the store
@@ -35,7 +35,7 @@ mvs remove                      # interactive: pick by number
 mvs restore                     # restore ALL files (clears tracking)
 mvs close                       # lock & unmount
 mvs status                      # check what's where
-```
+~~~
 
 ## Commands
 
@@ -55,18 +55,18 @@ mvs status                      # check what's where
 
 ## Project structure
 
-```
+~~~
 install.sh                 # Bootstrap: clones repo, runs build/install
 build/
   install                  # Actual installer script
   mvs                      # The Python CLI tool
 README.md
 .gitignore
-```
+~~~
 
 ## How it works
 
-```
+~~~
 mvs init
   → creates AES-256 encrypted APFS sparsebundle at ~/.local/share/mvs/<random>.sparsebundle
   → creates empty AES-256-CBC encrypted manifest inside
@@ -84,7 +84,7 @@ mvs hide
 mvs close
   → re-encrypts manifest → hdiutil detach → removes temp mount
   → vault file is opaque random data
-```
+~~~
 
 ## Security
 
@@ -94,4 +94,3 @@ mvs close
 - **No hardcoded secrets**: Zero keys or passphrases in the script.
 - **Zero trace when locked**: The sparsebundle is indistinguishable from random bytes.
 - **PBKDF2 key derivation**: Manifest encryption uses 100,000 iterations.
-
