@@ -1,27 +1,25 @@
 #!/usr/bin/env python3
 """
-MacVault — Encrypted file vault for macOS.
-AES-256 at every layer. Zero trace when locked.
-
-  macvault init              Create vault at ~/.macvault/<random>.sparsebundle
-  macvault init <path>       Create vault at custom path
-  macvault open              Open default vault
-  macvault open <path>       Open vault at custom path
-  macvault close             Lock & unmount
-  macvault add <path>        Move a file into the vault
-  macvault remove <path>     Restore a file from the vault
-  macvault list              Show tracked files
-  macvault status            Show vault location & state
-  macvault uninstall         Restore all, delete vault, remove self
+  init              Create store at ~/.local/share/mvs/<random>.sparsebundle
+  init <path>       Create store at custom path
+  open              Open default store
+  open <path>       Open store at custom path
+  close             Lock & unmount
+  add <path>        Move a file into the store
+  remove <path>     Restore a file from the store
+  list              Show tracked files
+  status            Show store location & state
+  restore           Restore ALL files (keeps store intact)
+  uninstall         Restore all, delete store, remove self
 """
 
 import argparse, hashlib, json, os, secrets, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve()
-VAULT_HOME = Path.home() / ".macvault"
+VAULT_HOME = Path.home() / ".local" / "share" / "mvs"
 CONFIG_FILE = VAULT_HOME / "config.json"
-STATE_FILE = Path(f"/tmp/.mv_state_{os.getuid()}")
+STATE_FILE = Path(f"/tmp/.mvs_{os.getuid()}")
 VAULT_SIZE_MB = int(os.environ.get("MACVAULT_SIZE", "5120"))
 
 # ── config ───────────────────────────────────────────────
@@ -45,9 +43,10 @@ def set_default_vault(path):
 
 # ── helpers ──────────────────────────────────────────────
 
-def die(msg): print(f"[!] {msg}", file=sys.stderr); sys.exit(1)
-def ok(msg):  print(f"[+] {msg}")
-def info(msg): print(f"[*] {msg}")
+def die(msg): print(f"{C['R']}[!]{C['X']} {msg}", file=sys.stderr); sys.exit(1)
+def ok(msg):  print(f"{C['G']}[+]{C['X']} {msg}")
+def info(msg): print(f"{C['C']}[*]{C['X']} {msg}")
+def dim(msg):  print(f"{C['D']}{msg}{C['X']}")
 
 def getpass_verify(prompt="Passphrase: "):
     import getpass
@@ -71,10 +70,10 @@ def clear_state():
 
 def require_open():
     st = read_state()
-    if not st: die("Vault is not open. Run 'macvault open' first.")
+    if not st: die("Store is not open. Run '" + BIN_NAME + " open' first.")
     if not Path(st["mount"]).is_mount():
         clear_state()
-        die("Mount point gone. Run 'macvault open' again.")
+        die("Mount point gone. Run '" + BIN_NAME + " open' again.")
     return st
 
 def manifest_path(mount):
@@ -124,7 +123,7 @@ def add_one(src, mount, passphrase, manifest):
     """Add a single file to the open vault. Returns updated manifest."""
     key = str(Path(src).resolve())
     if key in manifest:
-        print(f"  [!] Already in vault: {src}")
+        print(f"  [!] Already in store: {src}")
         return manifest
     h = file_hash(key)
     dst = os.path.join(mount, h)
@@ -140,7 +139,7 @@ def add_one(src, mount, passphrase, manifest):
 def remove_one(orig_key, mount, passphrase, manifest):
     """Remove a single file from the open vault. Returns updated manifest."""
     if orig_key not in manifest:
-        print(f"  [!] Not in vault: {orig_key}")
+        print(f"  [!] Not in store: {orig_key}")
         return manifest
     h = manifest[orig_key]
     vaulted = os.path.join(mount, h)
@@ -164,8 +163,8 @@ def cmd_init(args):
     if vault.exists():
         die(f"Already exists: {vault}")
 
-    info(f"Creating vault: {vault}")
-    passphrase = getpass_verify("Set vault passphrase: ")
+    info(f"Creating store: {vault}")
+    passphrase = getpass_verify("Set passphrase: ")
 
     subprocess.run(
         ["hdiutil", "create", "-size", f"{VAULT_SIZE_MB}m", "-fs", "APFS",
@@ -174,7 +173,7 @@ def cmd_init(args):
         input=passphrase.encode(), check=True
     )
 
-    mount = tempfile.mkdtemp(prefix=".mv_", dir="/tmp")
+    mount = tempfile.mkdtemp(prefix=".mvs_", dir="/tmp")
     subprocess.run(
         ["hdiutil", "attach", "-stdinpass", "-mountpoint", mount,
          "-nobrowse", str(vault)],
@@ -185,7 +184,7 @@ def cmd_init(args):
     os.rmdir(mount)
 
     set_default_vault(str(vault))
-    ok(f"Vault ready: {vault}")
+    ok(f"Store ready: {vault}")
     info(f"Size: {VAULT_SIZE_MB} MB  |  Passphrase: only you know it. No recovery.")
 
 def cmd_open(args):
@@ -194,18 +193,18 @@ def cmd_open(args):
     else:
         vault_path = get_default_vault()
         if not vault_path:
-            die("No vault found. Run 'macvault init' first.")
+            die("No store found. Run '" + BIN_NAME + " init' first.")
 
     vault = Path(vault_path)
     if not vault.exists():
-        die(f"Vault not found: {vault}")
+        die(f"Store not found: {vault}")
 
     if read_state():
-        die("A vault is already open. Run 'macvault close' first.")
+        die("A store is already open. Run '" + BIN_NAME + " close' first.")
 
-    passphrase = getpass_verify("Vault passphrase: ")
+    passphrase = getpass_verify("Passphrase: ")
 
-    mount = tempfile.mkdtemp(prefix=".mv_", dir="/tmp")
+    mount = tempfile.mkdtemp(prefix=".mvs_", dir="/tmp")
     try:
         subprocess.run(
             ["hdiutil", "attach", "-stdinpass", "-mountpoint", mount,
@@ -214,11 +213,11 @@ def cmd_open(args):
         )
     except subprocess.CalledProcessError:
         os.rmdir(mount)
-        die("Wrong passphrase or corrupted vault.")
+        die("Wrong passphrase or corrupted store.")
 
     manifest = read_manifest(mount, passphrase)
     write_state({"vault": str(vault), "mount": mount, "passphrase": passphrase})
-    ok(f"Vault open -- {len(manifest)} file(s) tracked.")
+    ok(f"Store open -- {len(manifest)} file(s) tracked.")
 
 def cmd_close(args):
     st = require_open()
@@ -235,7 +234,7 @@ def cmd_close(args):
     subprocess.run(["hdiutil", "detach", mount, "-force"], check=True)
     os.rmdir(mount)
     clear_state()
-    ok(f"Vault locked -- {len(manifest)} file(s) secured.")
+    ok(f"Store locked -- {len(manifest)} file(s) secured.")
 
 def cmd_add(args):
     st = require_open()
@@ -250,9 +249,7 @@ def cmd_add(args):
             die(f"File not found: {resolved}")
         add_one(resolved, mount, passphrase, manifest)
     else:
-        # Interactive mode: keep adding until Ctrl+C
-        print("[vault] Enter paths to add (Ctrl+C to exit)")
-        print("        Drag & drop works. Backslashes auto-stripped.")
+        print(f"{C['BD']}add — drag paths or type, Ctrl+C to exit{C['X']}")
         manifest = read_manifest(mount, passphrase)
         try:
             while True:
@@ -282,17 +279,17 @@ def cmd_remove(args):
         if key not in manifest:
             key = str(Path(os.path.expanduser(args.file.replace('\\', ''))).resolve())
         if key not in manifest:
-            die(f"Not in vault: {args.file}")
+            die(f"Not in store: {args.file}")
         remove_one(key, mount, passphrase, manifest)
     else:
         # Interactive mode: numbered list, pick and restore, loop
         if not manifest:
-            info("Vault is empty.")
+            info("Store is empty.")
             return
         items = sorted(manifest.items())
         try:
             while True:
-                print(f"\n  {len(items)} file(s) in vault:\n")
+                print(f"\n  {C['BD']}{len(items)} file(s) in store:{C['X']}\n")
                 for i, (orig, h) in enumerate(items, 1):
                     vaulted = Path(mount) / h
                     size = ""
@@ -301,8 +298,8 @@ def cmd_remove(args):
                         if sz < 1024: size = f"{sz} B"
                         elif sz < 1024*1024: size = f"{sz/1024:.1f} KB"
                         else: size = f"{sz/(1024*1024):.1f} MB"
-                    print(f"  [{i}] {orig}  ({size})")
-                print(f"  [a] restore ALL  [q] quit")
+                    print(f"  {C['Y']}[{i}]{C['X']} {C['D']}{orig}{C['X']}  ({size})")
+                print(f"  {C['Y']}[a]{C['X']} restore ALL  {C['Y']}[q]{C['X']} quit")
                 choice = input("\n  pick> ").strip()
                 if choice.lower() == 'q':
                     break
@@ -319,7 +316,7 @@ def cmd_remove(args):
                         manifest = remove_one(orig_key, mount, passphrase, manifest)
                         items = sorted(manifest.items())
                         if not items:
-                            info("Vault is now empty.")
+                            info("Store is now empty.")
                             break
                     else:
                         print(f"  [!] Invalid number: {choice}")
@@ -346,10 +343,10 @@ def cmd_restore(args):
     mount, passphrase = st["mount"], st["passphrase"]
     manifest = read_manifest(mount, passphrase)
     if not manifest:
-        info("Vault is already empty.")
+        info("Store is already empty.")
         return
     cmd_restore_inner(mount, passphrase, manifest)
-    ok("All files restored. Vault is now empty.")
+    ok("All files restored. Store is now empty.")
 
 def cmd_list(args):
     st = require_open()
@@ -370,8 +367,8 @@ def cmd_list(args):
             if sz < 1024: size = f"{sz} B"
             elif sz < 1024*1024: size = f"{sz/1024:.1f} KB"
             else: size = f"{sz/(1024*1024):.1f} MB"
-        print(f"  {orig}")
-        print(f"    -> {h}  ({size})")
+        print(f"  {C['D']}{orig}{C['X']}")
+        print(f"    {C['D']}->{C['X']} {h}  ({size})")
     print()
 
 def cmd_status(args):
@@ -383,18 +380,18 @@ def cmd_status(args):
                 sz = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
             else:
                 sz = p.stat().st_size
-            print(f"  Default vault: {v}")
+            print(f"  {C['BD']}Default store:{C['X']} {v}")
             print(f"  Size on disk:  {sz / (1024*1024):.1f} MB")
         else:
-            print(f"  Default vault: {v}  (missing!)")
+            print(f"  {C['BD']}Default store:{C['X']} {v}  {C['R']}(missing!){C['X']}")
     else:
-        print("  No vault configured. Run 'macvault init' to create one.")
+        print(f"  {C['D']}No store configured. Run '{BIN_NAME} init' to create one.{C['X']}")
 
     st = read_state()
     if st:
-        print(f"  State:         OPEN -> {st['mount']}")
+        print(f"  {C['BD']}State:{C['X']}         {C['G']}OPEN{C['X']} -> {st['mount']}")
     else:
-        print("  State:         locked")
+        print(f"  {C['BD']}State:{C['X']}         {C['R']}locked{C['X']}")
 
 def cmd_uninstall(args):
     st = read_state()
@@ -434,7 +431,7 @@ def cmd_uninstall(args):
     except OSError:
         pass
 
-    info("Removing macvault...")
+    info("Removing " + BIN_NAME + "...")
     SCRIPT.unlink(missing_ok=True)
     ok("Uninstalled. No trace remains.")
 
@@ -442,29 +439,28 @@ def cmd_uninstall(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="macvault — encrypted file vault for macOS",
-        usage="macvault <command> [args]"
-    )
+        description="file utility",
+        usage=BIN_NAME + " <command> [args]")
     subs = parser.add_subparsers(dest="command")
 
-    p = subs.add_parser("init", help="Create a new vault (random name if no path given)")
-    p.add_argument("vault", nargs="?", help="Custom vault path (optional)")
+    p = subs.add_parser("init", help="Create a new store")
+    p.add_argument("vault", nargs="?", help="Custom path (optional)")
 
-    p = subs.add_parser("open", help="Unlock and mount the default vault (or specify path)")
-    p.add_argument("vault", nargs="?", help="Vault path (uses default if omitted)")
+    p = subs.add_parser("open", help="Unlock and mount the default store")
+    p.add_argument("vault", nargs="?", help="Store path (uses default if omitted)")
 
-    subs.add_parser("close", help="Lock and unmount the vault")
+    subs.add_parser("close", help="Lock and unmount")
 
-    p = subs.add_parser("add", help="Move files into the vault (interactive if no path given)")
-    p.add_argument("file", nargs="?", help="Path to the file or folder (drag & drop works)")
+    p = subs.add_parser("add", help="Move files in (interactive if no path)")
+    p.add_argument("file", nargs="?", help="Path to file or folder")
 
-    p = subs.add_parser("remove", help="Restore files from the vault (numbered list if no path given)")
-    p.add_argument("file", nargs="?", help="Original path of the file to restore")
+    p = subs.add_parser("remove", help="Restore files (numbered list if no path)")
+    p.add_argument("file", nargs="?", help="Original path to restore")
 
-    subs.add_parser("list", help="Show all tracked files (vault must be open)")
-    subs.add_parser("restore", help="Restore ALL files from vault (keeps vault intact)")
-    subs.add_parser("status", help="Show vault location and lock state")
-    subs.add_parser("uninstall", help="Restore all files, delete vault, remove macvault")
+    subs.add_parser("list", help="Show tracked files")
+    subs.add_parser("restore", help="Restore ALL files")
+    subs.add_parser("status", help="Show location and lock state")
+    subs.add_parser("uninstall", help="Restore all, delete store, remove self")
 
     args = parser.parse_args()
 

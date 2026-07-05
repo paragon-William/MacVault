@@ -6,42 +6,45 @@
 set -euo pipefail
 
 DEST="${1:-$HOME/.local/bin}"
+NAME="${2:-mvs}"
 
-echo "[*] Installing MacVault to $DEST ..."
+echo "[*] Installing $NAME to $DEST ..."
 
 command -v python3 >/dev/null 2>&1 || { echo "[!] python3 required."; exit 1; }
 command -v openssl >/dev/null 2>&1 || { echo "[!] openssl required."; exit 1; }
 
 mkdir -p "$DEST"
 
-python3 - "$DEST/macvault" << 'PYEOF'
+python3 - "$DEST/$NAME" << 'PYEOF'
 import sys, os, stat
 
 script = r'''#!/usr/bin/env python3
 """
-MacVault — Encrypted file vault for macOS.
-AES-256 at every layer. Zero trace when locked.
-
-  macvault init              Create vault at ~/.macvault/<random>.sparsebundle
-  macvault init <path>       Create vault at custom path
-  macvault open              Open default vault
-  macvault open <path>       Open vault at custom path
-  macvault close             Lock & unmount
-  macvault add <path>        Move a file into the vault
-  macvault remove <path>     Restore a file from the vault
-  macvault list              Show tracked files
-  macvault status            Show vault location & state
-  macvault uninstall         Restore all, delete vault, remove self
+  init              Create store at ~/.local/share/mvs/<random>.sparsebundle
+  init <path>       Create store at custom path
+  open              Open default store
+  open <path>       Open store at custom path
+  close             Lock & unmount
+  add <path>        Move a file into the store
+  remove <path>     Restore a file from the store
+  list              Show tracked files
+  status            Show store location & state
+  restore           Restore ALL files (keeps store intact)
+  uninstall         Restore all, delete store, remove self
 """
 
 import argparse, hashlib, json, os, secrets, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve()
-VAULT_HOME = Path.home() / ".macvault"
+BIN_NAME = SCRIPT.name
+VAULT_HOME = Path.home() / ".local" / "share" / "mvs"
 CONFIG_FILE = VAULT_HOME / "config.json"
-STATE_FILE = Path(f"/tmp/.mv_state_{os.getuid()}")
+STATE_FILE = Path(f"/tmp/.mvs_{os.getuid()}")
 VAULT_SIZE_MB = int(os.environ.get("MACVAULT_SIZE", "5120"))
+
+C = {"R":chr(27)+"[91m","G":chr(27)+"[92m","Y":chr(27)+"[93m","B":chr(27)+"[94m","C":chr(27)+"[96m",
+     "W":chr(27)+"[97m","D":chr(27)+"[2m","X":chr(27)+"[0m","BD":chr(27)+"[1m"+chr(27)+"[2m"}
 
 def load_config():
     if CONFIG_FILE.exists(): return json.loads(CONFIG_FILE.read_text())
@@ -58,9 +61,9 @@ def set_default_vault(path):
     cfg["vault"] = str(Path(path).resolve())
     save_config(cfg)
 
-def die(msg): print(f"[!] {msg}", file=sys.stderr); sys.exit(1)
-def ok(msg):  print(f"[+] {msg}")
-def info(msg): print(f"[*] {msg}")
+def die(msg): print(f"{C['R']}[!]{C['X']} {msg}", file=sys.stderr); sys.exit(1)
+def ok(msg):  print(f"{C['G']}[+]{C['X']} {msg}")
+def info(msg): print(f"{C['C']}[*]{C['X']} {msg}")
 
 def getpass_verify(prompt="Passphrase: "):
     import getpass
@@ -82,10 +85,10 @@ def clear_state(): STATE_FILE.unlink(missing_ok=True)
 
 def require_open():
     st = read_state()
-    if not st: die("Vault is not open. Run 'macvault open' first.")
+    if not st: die("Store is not open. Run '" + BIN_NAME + " open' first.")
     if not Path(st["mount"]).is_mount():
         clear_state()
-        die("Mount point gone. Run 'macvault open' again.")
+        die("Mount point gone. Run '" + BIN_NAME + " open' again.")
     return st
 
 def manifest_path(mount): return os.path.join(mount, ".manifest.enc")
@@ -124,7 +127,7 @@ def resolve_path(input_path):
 def add_one(src, mount, passphrase, manifest):
     key = str(Path(src).resolve())
     if key in manifest:
-        print(f"  [!] Already in vault: {src}")
+        print(f"  [!] Already in store: {src}")
         return manifest
     h = file_hash(key)
     dst = os.path.join(mount, h)
@@ -139,7 +142,7 @@ def add_one(src, mount, passphrase, manifest):
 
 def remove_one(orig_key, mount, passphrase, manifest):
     if orig_key not in manifest:
-        print(f"  [!] Not in vault: {orig_key}")
+        print(f"  [!] Not in store: {orig_key}")
         return manifest
     h = manifest[orig_key]
     vaulted = os.path.join(mount, h)
@@ -158,14 +161,14 @@ def cmd_init(args):
         VAULT_HOME.mkdir(parents=True, exist_ok=True)
         vault = VAULT_HOME / random_basename()
     if vault.exists(): die(f"Already exists: {vault}")
-    info(f"Creating vault: {vault}")
-    passphrase = getpass_verify("Set vault passphrase: ")
+    info(f"Creating store: {vault}")
+    passphrase = getpass_verify("Set passphrase: ")
     subprocess.run(
         ["hdiutil", "create", "-size", f"{VAULT_SIZE_MB}m", "-fs", "APFS",
          "-encryption", "AES-256", "-stdinpass", "-type", "SPARSEBUNDLE",
          "-volname", "vault", str(vault)],
         input=passphrase.encode(), check=True)
-    mount = tempfile.mkdtemp(prefix=".mv_", dir="/tmp")
+    mount = tempfile.mkdtemp(prefix=".mvs_", dir="/tmp")
     subprocess.run(
         ["hdiutil", "attach", "-stdinpass", "-mountpoint", mount,
          "-nobrowse", str(vault)],
@@ -182,11 +185,11 @@ def cmd_open(args):
         vault_path = str(Path(args.vault).resolve())
     else:
         vault_path = get_default_vault()
-        if not vault_path: die("No vault found. Run 'macvault init' first.")
+        if not vault_path: die("No store found. Run '" + BIN_NAME + "' init first.")
     vault = Path(vault_path)
     if not vault.exists(): die(f"Vault not found: {vault}")
-    if read_state(): die("A vault is already open. Run 'macvault close' first.")
-    passphrase = getpass_verify("Vault passphrase: ")
+    if read_state(): die("A store is already open. Run '" + BIN_NAME + "' close first.")
+    passphrase = getpass_verify("Passphrase: ")
     mount = tempfile.mkdtemp(prefix=".mv_", dir="/tmp")
     try:
         subprocess.run(
@@ -334,7 +337,7 @@ def cmd_status(args):
         else:
             print(f"  Default vault: {v}  (missing!)")
     else:
-        print("  No vault configured. Run 'macvault init' to create one.")
+        print(f"  {C['D']}No store configured. Run '{BIN_NAME} init' to create one.{C['X']}")
     st = read_state()
     if st:
         print(f"  State:         OPEN -> {st['mount']}")
@@ -368,28 +371,28 @@ def cmd_uninstall(args):
     if CONFIG_FILE.exists(): CONFIG_FILE.unlink()
     try: VAULT_HOME.rmdir()
     except OSError: pass
-    info("Removing macvault...")
+    info("Removing " + BIN_NAME + "...")
     SCRIPT.unlink(missing_ok=True)
     ok("Uninstalled. No trace remains.")
 
 def main():
     parser = argparse.ArgumentParser(
-        description="macvault -- encrypted file vault for macOS",
-        usage="macvault <command> [args]")
+        description="file utility",
+        usage=BIN_NAME + " <command> [args]")
     subs = parser.add_subparsers(dest="command")
-    p = subs.add_parser("init", help="Create a new vault (random name if no path given)")
-    p.add_argument("vault", nargs="?", help="Custom vault path (optional)")
-    p = subs.add_parser("open", help="Unlock and mount the default vault (or specify path)")
-    p.add_argument("vault", nargs="?", help="Vault path (uses default if omitted)")
-    subs.add_parser("close", help="Lock and unmount the vault")
-    p = subs.add_parser("add", help="Move files into the vault (interactive if no path)")
-    p.add_argument("file", nargs="?", help="Path to file or folder (drag & drop works)")
+    p = subs.add_parser("init", help="Create a new store")
+    p.add_argument("vault", nargs="?", help="Custom path (optional)")
+    p = subs.add_parser("open", help="Unlock and mount the default store")
+    p.add_argument("vault", nargs="?", help="Store path (uses default if omitted)")
+    subs.add_parser("close", help="Lock and unmount")
+    p = subs.add_parser("add", help="Move files in (interactive if no path)")
+    p.add_argument("file", nargs="?", help="Path to file or folder")
     p = subs.add_parser("remove", help="Restore files (numbered list if no path)")
-    p.add_argument("file", nargs="?", help="Original path of the file to restore")
-    subs.add_parser("list", help="Show all tracked files (vault must be open)")
-    subs.add_parser("restore", help="Restore ALL files (keeps vault intact)")
-    subs.add_parser("status", help="Show vault location and lock state")
-    subs.add_parser("uninstall", help="Restore all files, delete vault, remove macvault")
+    p.add_argument("file", nargs="?", help="Original path to restore")
+    subs.add_parser("list", help="Show tracked files")
+    subs.add_parser("restore", help="Restore ALL files")
+    subs.add_parser("status", help="Show location and lock state")
+    subs.add_parser("uninstall", help="Restore all, delete store, remove self")
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -406,11 +409,11 @@ dest = sys.argv[1]
 with open(dest, 'w') as f:
     f.write(script)
 os.chmod(dest, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
-print(f"[+] macvault written to {dest}")
+print(f"[+] {os.path.basename(dest)} written to {dest}")
 PYEOF
 
 echo ""
-echo "[+] MacVault installed to $DEST/macvault"
+echo "[+] $NAME installed to $DEST/$NAME"
 echo ""
 echo "  Make sure $DEST is in your PATH:"
 echo "    export PATH=\"$DEST:\$PATH\""
@@ -419,13 +422,13 @@ echo "  Keep commands out of zsh history (prefix with a space):"
 echo "    echo 'setopt HIST_IGNORE_SPACE' >> ~/.zshrc && source ~/.zshrc"
 echo ""
 echo "  Then just run it to see commands:"
-echo "    macvault"
+echo "    $NAME"
 echo ""
 echo "  Quick start:"
-echo "    macvault init       # creates ~/.macvault/<random>.sparsebundle"
-echo "    macvault open       # unlock & mount"
-echo "     macvault add       # interactive add (drag & drop paths)"
-echo "    macvault list       # show tracked files"
-echo "     macvault remove    # interactive remove (pick by number)"
-echo "    macvault restore    # restore ALL files at once"
-echo "    macvault close      # lock it all up"
+echo "    $NAME init       # creates ~/.local/share/mvs/<random>.sparsebundle"
+echo "    $NAME open       # unlock & mount"
+echo "     $NAME add       # interactive add (drag & drop paths)"
+echo "    $NAME list       # show tracked files"
+echo "     $NAME remove    # interactive remove (pick by number)"
+echo "    $NAME restore    # restore ALL files at once"
+echo "    $NAME close      # lock it all up"
