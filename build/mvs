@@ -294,30 +294,21 @@ def cmd_show(args):
     mount, passphrase = st["mount"], st["passphrase"]
     manifest = read_manifest(mount, passphrase)
     if not manifest: info("Nothing tracked."); return
-    count = 0
-    for orig, h in manifest.items():
-        vaulted = os.path.join(mount, h)
-        if os.path.exists(vaulted):
-            os.makedirs(os.path.dirname(orig), exist_ok=True)
-            shutil.move(vaulted, orig)
-            count += 1
-    ok(f"Shown {count} file(s) to original locations.")
+    n = show_all(mount, manifest)
+    # Manifest unchanged — no write needed
+    if n > 0: ok(f"Shown {n} file(s).")
 
 def cmd_hide(args):
     st = require_open()
     mount, passphrase = st["mount"], st["passphrase"]
     manifest = read_manifest(mount, passphrase)
     if not manifest: info("Nothing tracked."); return
-    count = 0
-    for orig, h in list(manifest.items()):
-        if os.path.exists(orig):
-            dst = os.path.join(mount, h)
-            if not os.path.exists(dst):
-                os.makedirs(os.path.dirname(dst), exist_ok=True)
-                shutil.move(orig, dst)
-                count += 1
-    write_manifest(mount, passphrase, manifest)
-    ok(f"Hid {count} file(s).")
+    n = hide_all(mount, manifest)
+    # Write manifest in background so command returns instantly
+    import threading
+    t = threading.Thread(target=write_manifest, args=(mount, passphrase, manifest.copy()))
+    t.start()
+    if n > 0: ok(f"Hid {n} file(s).")
 
 def cmd_list(args):
     st = require_open()
