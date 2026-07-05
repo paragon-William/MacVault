@@ -305,6 +305,36 @@ def cmd_restore(args):
     cmd_restore_inner(mount, passphrase, manifest)
     ok("All files restored. Vault is now empty.")
 
+def cmd_show(args):
+    st = require_open()
+    mount, passphrase = st["mount"], st["passphrase"]
+    manifest = read_manifest(mount, passphrase)
+    if not manifest: info("Nothing tracked."); return
+    count = 0
+    for orig, h in manifest.items():
+        vaulted = os.path.join(mount, h)
+        if os.path.exists(vaulted):
+            os.makedirs(os.path.dirname(orig), exist_ok=True)
+            shutil.move(vaulted, orig)
+            count += 1
+    ok(f"Shown {count} file(s) to original locations.")
+
+def cmd_hide(args):
+    st = require_open()
+    mount, passphrase = st["mount"], st["passphrase"]
+    manifest = read_manifest(mount, passphrase)
+    if not manifest: info("Nothing tracked."); return
+    count = 0
+    for orig, h in list(manifest.items()):
+        if os.path.exists(orig):
+            dst = os.path.join(mount, h)
+            if not os.path.exists(dst):
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.move(orig, dst)
+                count += 1
+    write_manifest(mount, passphrase, manifest)
+    ok(f"Hid {count} file(s).")
+
 def cmd_list(args):
     st = require_open()
     mount, passphrase = st["mount"], st["passphrase"]
@@ -391,6 +421,8 @@ def main():
     p.add_argument("file", nargs="?", help="Original path to restore")
     subs.add_parser("list", help="Show tracked files")
     subs.add_parser("restore", help="Restore ALL files")
+    subs.add_parser("show", help="Restore all tracked files to origin (keeps tracking)")
+    subs.add_parser("hide", help="Hide all tracked files back into store (instant)")
     subs.add_parser("status", help="Show location and lock state")
     subs.add_parser("uninstall", help="Restore all, delete store, remove self")
     args = parser.parse_args()
@@ -398,8 +430,8 @@ def main():
         parser.print_help()
         sys.exit(0)
     {"init": cmd_init, "open": cmd_open, "close": cmd_close, "add": cmd_add,
-     "remove": cmd_remove, "list": cmd_list, "restore": cmd_restore,
-     "status": cmd_status, "uninstall": cmd_uninstall}[args.command](args)
+     "remove": cmd_remove, "list": cmd_list, "show": cmd_show, "hide": cmd_hide,
+     "restore": cmd_restore, "status": cmd_status, "uninstall": cmd_uninstall}[args.command](args)
 
 if __name__ == "__main__":
     main()
@@ -429,6 +461,8 @@ echo "    $NAME init       # creates ~/.local/share/mvs/<random>.sparsebundle"
 echo "    $NAME open       # unlock & mount"
 echo "     $NAME add       # interactive add (drag & drop paths)"
 echo "    $NAME list       # show tracked files"
+echo "    $NAME show       # restore all files to origin (keeps tracking)"
+echo "     $NAME hide      # instant re-hide (under 2 sec, any size)"
 echo "     $NAME remove    # interactive remove (pick by number)"
-echo "    $NAME restore    # restore ALL files at once"
+echo "    $NAME restore    # restore ALL & stop tracking"
 echo "    $NAME close      # lock it all up"
