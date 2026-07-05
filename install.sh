@@ -11,7 +11,6 @@ NAME="${2:-mvs}"
 TMPDIR="$(mktemp -d /tmp/_macvault_XXXXXX)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
-# Colours
 BOLD="$(tput bold)"
 DIM="$(tput dim)"
 GREEN="$(tput setaf 2)"
@@ -23,7 +22,6 @@ echo "  ${BOLD}${GREEN}MacVault Installer${RESET}"
 echo "  ${DIM}https://github.com/paragon-William/MacVault${RESET}"
 echo ""
 
-# Step 1
 echo "  ${DIM}Cloning repository...${RESET}"
 git clone --depth 1 "$REPO" "$TMPDIR" &>/dev/null
 echo "  ${GREEN}Done.${RESET}"
@@ -37,18 +35,15 @@ fi
 
 chmod +x build/install build/mvs 2>/dev/null || true
 
-# Step 2
 echo "  ${DIM}Verifying source files...${RESET}"
 sleep 0.2
 echo "  ${GREEN}Done.${RESET}"
 
-# Step 3
 echo "  ${DIM}Installing ${NAME} to ${DEST}...${RESET}"
 bash build/install "$@" &>/dev/null
 sleep 0.2
 echo "  ${GREEN}Done.${RESET}"
 
-# Step 4
 echo "  ${DIM}Finalising...${RESET}"
 sleep 0.2
 echo "  ${GREEN}Done.${RESET}"

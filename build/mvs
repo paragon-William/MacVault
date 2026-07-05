@@ -217,7 +217,9 @@ def hide_all(mount, manifest):
 
 # ── Auto‑update ───────────────────────────────────────────
 def check_for_update():
-    """If a newer version exists, download and replace ourselves, then re‑exec."""
+    # Skip during development (running from source tree)
+    if SCRIPT.parent.name == "build" and SCRIPT.parent.parent.name == "MacVault":
+        return
     try:
         with urllib.request.urlopen(VERSION_URL, timeout=5) as resp:
             data = json.loads(resp.read().decode())
@@ -227,18 +229,15 @@ def check_for_update():
         info("New version " + remote_version + " available. Updating...")
         with urllib.request.urlopen(UPDATE_URL, timeout=30) as resp:
             new_code = resp.read()
-        # Verify it's valid Python
         import ast
         ast.parse(new_code.decode())
-        # Write to temp, then atomically replace
         tmp = Path(str(SCRIPT) + ".new")
         tmp.write_bytes(new_code)
         tmp.chmod(0o755)
         os.replace(tmp, SCRIPT)
         ok("Updated to " + remote_version + ". Restarting...")
         os.execv(str(SCRIPT), sys.argv)
-    except Exception as e:
-        # Silently skip on network errors or any failure
+    except Exception:
         pass
 
 # ── Commands ──────────────────────────────────────────────
