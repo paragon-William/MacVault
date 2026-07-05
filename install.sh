@@ -7,7 +7,7 @@ set -euo pipefail
 
 DEST="${1:-$HOME/.local/bin}"
 
-echo "[*] Installing macvault to $DEST ..."
+echo "[*] Installing MacVault to $DEST ..."
 
 command -v python3 >/dev/null 2>&1 || { echo "[!] python3 required."; exit 1; }
 command -v openssl >/dev/null 2>&1 || { echo "[!] openssl required."; exit 1; }
@@ -19,7 +19,7 @@ import sys, os, stat
 
 script = r'''#!/usr/bin/env python3
 """
-macvault — Encrypted file vault for macOS.
+MacVault — Encrypted file vault for macOS.
 AES-256 at every layer. Zero trace when locked.
 
   macvault init              Create vault at ~/.macvault/<random>.sparsebundle
@@ -410,7 +410,7 @@ print(f"[+] macvault written to {dest}")
 PYEOF
 
 echo ""
-echo "[+] macvault installed to $DEST/macvault"
+echo "[+] MacVault installed to $DEST/macvault"
 echo ""
 echo "  Make sure $DEST is in your PATH:"
 echo "    export PATH=\"$DEST:\$PATH\""

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-macvault — Encrypted file vault for macOS.
+MacVault — Encrypted file vault for macOS.
 AES-256 at every layer. Zero trace when locked.
 
   macvault init              Create vault at ~/.macvault/<random>.sparsebundle
