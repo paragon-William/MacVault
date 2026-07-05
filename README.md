@@ -1,7 +1,5 @@
 ![MacVault](macvault.jpeg)
 # MacVault
-# Stable Version 1.0
-
 
 A portable encrypted file store for macOS. AES-256 at every layer. Zero trace when locked. Installs as an innocuous system utility — nothing about it suggests encryption at a glance.
 
@@ -10,19 +8,18 @@ A portable encrypted file store for macOS. AES-256 at every layer. Zero trace wh
 ~~~bash
 # One-liner (clones repo, installs `mvs` to ~/.local/bin)
 curl -sL https://raw.githubusercontent.com/paragon-William/MacVault/main/install.sh | bash
-~~~
-~~~bash
+
 # Custom name and path
 curl -sL https://raw.githubusercontent.com/paragon-William/MacVault/main/install.sh | bash -s /usr/local/bin mytool
-~~~
-~~~bash
+
 # Or clone manually
 git clone https://github.com/paragon-William/MacVault.git
 cd MacVault && bash build/install
 ~~~
+
 Requires only `python3`, `openssl`, and `git` — all included with macOS.
 
-## Quick Start
+## Quick start
 
 ~~~bash
 mvs init                        # creates ~/.local/share/mvs/<random>.sparsebundle
@@ -63,6 +60,7 @@ install.sh                 # Bootstrap: clones repo, runs build/install
 build/
   install                  # Actual installer script
   mvs                      # The Python CLI tool
+  version.json             # Remote version info for auto-update
 README.md
 .gitignore
 ~~~
@@ -91,9 +89,10 @@ mvs close
 
 ## Security
 
-- **Dual-layer AES-256**: APFS image encryption + `openssl enc -aes-256-cbc` manifest encryption. Even when mounted, file paths are ciphertext.
+- **Dual-layer AES-256**: APFS image encryption + `openssl enc -aes-256-gcm` manifest encryption with authentication. Even when mounted, file paths are ciphertext.
+- **Argon2id key derivation**: Memory-hard key derivation prevents GPU-accelerated brute-force attacks (falls back to PBKDF2 on older OpenSSL).
+- **Atomic manifest writes**: Manifest is never overwritten in place — writes go to a temp file first, then atomically swapped to prevent corruption.
 - **Passphrase never stored**: Provided at runtime. No recovery — lose it, lose the data.
 - **No daemon, no root**: Runs only when invoked. No background processes.
 - **No hardcoded secrets**: Zero keys or passphrases in the script.
 - **Zero trace when locked**: The sparsebundle is indistinguishable from random bytes.
-- **PBKDF2 key derivation**: Manifest encryption uses 100,000 iterations.
