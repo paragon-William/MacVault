@@ -1,47 +1,65 @@
 #!/bin/bash
 # ============================================================
-# build/install — copies mvs to destination, adds to PATH
+# MacVault — Bootstrap installer
+#   curl -sL https://raw.githubusercontent.com/paragon-William/MacVault/main/install.sh | bash
 # ============================================================
 set -euo pipefail
 
+REPO="https://github.com/paragon-William/MacVault.git"
 DEST="${1:-$HOME/.local/bin}"
 NAME="${2:-mvs}"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SRC="$SCRIPT_DIR/mvs"
+TMPDIR="$(mktemp -d /tmp/_macvault_XXXXXX)"
+trap 'rm -rf "$TMPDIR"' EXIT
 
-echo "[*] Installing $NAME to $DEST ..."
+BOLD="$(tput bold)"
+DIM="$(tput dim)"
+GREEN="$(tput setaf 2)"
+CYAN="$(tput setaf 6)"
+RESET="$(tput sgr0)"
 
-if [ ! -f "$SRC" ]; then
-    echo "[!] build/mvs not found. Is the repo cloned correctly?"
+echo ""
+echo "  ${BOLD}${GREEN}MacVault Installer${RESET}"
+echo "  ${DIM}https://github.com/paragon-William/MacVault${RESET}"
+echo ""
+
+echo "  ${DIM}Cloning repository...${RESET}"
+git clone --depth 1 "$REPO" "$TMPDIR" &>/dev/null
+echo "  ${GREEN}Done.${RESET}"
+
+cd "$TMPDIR"
+
+if [ ! -f build/install ]; then
+    echo "  [!] build/install not found in repo."
     exit 1
 fi
 
-command -v python3 >/dev/null 2>&1 || { echo "[!] python3 required."; exit 1; }
-command -v openssl >/dev/null 2>&1 || { echo "[!] openssl required."; exit 1; }
+chmod +x build/install build/mvs 2>/dev/null || true
 
-mkdir -p "$DEST"
-cp "$SRC" "$DEST/$NAME"
-chmod +x "$DEST/$NAME"
+echo "  ${DIM}Verifying source files...${RESET}"
+sleep 0.2
+echo "  ${GREEN}Done.${RESET}"
+
+echo "  ${DIM}Installing ${NAME} to ${DEST}...${RESET}"
+bash build/install "$@" &>/dev/null
+sleep 0.2
+echo "  ${GREEN}Done.${RESET}"
+
+echo "  ${DIM}Finalising...${RESET}"
+sleep 0.2
+echo "  ${GREEN}Done.${RESET}"
 
 echo ""
-echo "[+] $NAME installed to $DEST/$NAME"
+echo "  ${GREEN}${BOLD}Congratulations! MacVault is installed.${RESET}"
 echo ""
-echo "  Make sure $DEST is in your PATH:"
-echo "    export PATH=\"$DEST:\$PATH\""
+echo "  ${BOLD}Usage:${RESET}"
+echo "    ${CYAN}${NAME}${RESET} init       # create a new encrypted store"
+echo "    ${CYAN}${NAME}${RESET} open       # unlock and mount"
+echo "    ${CYAN}${NAME}${RESET} add        # move files into the store"
+echo "    ${CYAN}${NAME}${RESET} show       # restore files to origin"
+echo "    ${CYAN}${NAME}${RESET} hide       # instant re-hide"
+echo "    ${CYAN}${NAME}${RESET} close      # lock it all up"
 echo ""
-echo "  Keep commands out of zsh history (prefix with a space):"
-echo "    echo 'setopt HIST_IGNORE_SPACE' >> ~/.zshrc && source ~/.zshrc"
+echo "  ${DIM}Prefix commands with a space to keep them out of history.${RESET}"
+echo "  ${DIM}To keep the tool hidden, do NOT add it to your PATH permanently.${RESET}"
+echo "  ${DIM}Instead, run it by full path: ${DEST}/${NAME}${RESET}"
 echo ""
-echo "  Then just run it to see commands:"
-echo "    $NAME"
-echo ""
-echo "  Quick start:"
-echo "    $NAME init       # creates ~/.local/share/mvs/<random>.sparsebundle"
-echo "    $NAME open       # unlock & mount"
-echo "     $NAME add       # interactive add (drag & drop paths)"
-echo "    $NAME list       # show tracked files"
-echo "    $NAME show       # restore all files to origin (keeps tracking)"
-echo "     $NAME hide      # instant re-hide (under 2 sec, any size)"
-echo "     $NAME remove    # interactive remove (pick by number)"
-echo "    $NAME restore    # restore ALL & stop tracking"
-echo "    $NAME close      # lock it all up"
