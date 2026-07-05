@@ -22,7 +22,6 @@ echo "  ${BOLD}${GREEN}MacVault Installer${RESET}"
 echo "  ${DIM}https://github.com/paragon-William/MacVault${RESET}"
 echo ""
 
-# ── Step 1: Clone ─────────────────────────────────────────
 echo "  ${DIM}Cloning repository...${RESET}"
 git clone --depth 1 "$REPO" "$TMPDIR" &>/dev/null
 echo "  ${GREEN}Done.${RESET}"
@@ -36,12 +35,10 @@ fi
 
 chmod +x build/mvs 2>/dev/null || true
 
-# ── Step 2: Verify ────────────────────────────────────────
 echo "  ${DIM}Verifying source files...${RESET}"
 sleep 0.2
 echo "  ${GREEN}Done.${RESET}"
 
-# ── Step 3: Install ───────────────────────────────────────
 echo "  ${DIM}Installing ${NAME} to ${DEST}...${RESET}"
 mkdir -p "$DEST"
 cp build/mvs "$DEST/$NAME"
@@ -49,7 +46,6 @@ chmod +x "$DEST/$NAME"
 sleep 0.2
 echo "  ${GREEN}Done.${RESET}"
 
-# ── Step 4: Finalise ──────────────────────────────────────
 echo "  ${DIM}Finalising...${RESET}"
 sleep 0.2
 echo "  ${GREEN}Done.${RESET}"
