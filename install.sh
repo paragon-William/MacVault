@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # MacVault — One-liner installer
-#   curl -sL <url>/install.sh | bash
+#   curl -sL https://raw.githubusercontent.com/paragon-William/MacVault/main/install.sh | bash
 # ============================================================
 set -euo pipefail
 

@@ -10,9 +10,15 @@ MacVault creates an AES-256 encrypted APFS disk image and moves your files insid
 ## Install
 
 ```bash
-chmod +x install.sh macvault
-./install.sh                      # installs to ~/.local/bin/macvault
-./install.sh /usr/local/bin       # or any directory in your PATH
+# One-liner (recommended)
+curl -sL https://raw.githubusercontent.com/paragon-William/MacVault/main/install.sh | bash
+
+# Or clone and run locally
+git clone https://github.com/paragon-William/MacVault.git
+cd MacVault && chmod +x install.sh && ./install.sh
+
+# Custom install path
+./install.sh /usr/local/bin
 ```
 
 Requires only `python3` and `openssl` — both included with macOS.
