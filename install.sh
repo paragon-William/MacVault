@@ -83,7 +83,7 @@ def clear_state(): STATE_FILE.unlink(missing_ok=True)
 def require_open():
     st = read_state()
     if not st: die("Vault is not open. Run 'macvault open' first.")
-    if not Path(st["mount"]).ismount():
+    if not Path(st["mount"]).is_mount():
         clear_state()
         die("Mount point gone. Run 'macvault open' again.")
     return st
@@ -112,6 +112,44 @@ def write_manifest(mount, passphrase, data):
 
 def file_hash(path): return hashlib.sha256(str(path).encode()).hexdigest()[:16]
 def random_basename(): return f"{secrets.token_hex(10)}.sparsebundle"
+
+def resolve_path(input_path):
+    p = input_path.replace('\\', '')
+    p = os.path.expanduser(p)
+    p = p.rstrip('/')
+    if os.path.exists(p): return p
+    if os.path.exists(p + '.app'): return p + '.app'
+    return p
+
+def add_one(src, mount, passphrase, manifest):
+    key = str(Path(src).resolve())
+    if key in manifest:
+        print(f"  [!] Already in vault: {src}")
+        return manifest
+    h = file_hash(key)
+    dst = os.path.join(mount, h)
+    if os.path.exists(dst):
+        print(f"  [!] Hash collision -- rename and try again.")
+        return manifest
+    shutil.move(str(Path(src).resolve()), dst)
+    manifest[key] = h
+    write_manifest(mount, passphrase, manifest)
+    ok(f"Added: {key}")
+    return manifest
+
+def remove_one(orig_key, mount, passphrase, manifest):
+    if orig_key not in manifest:
+        print(f"  [!] Not in vault: {orig_key}")
+        return manifest
+    h = manifest[orig_key]
+    vaulted = os.path.join(mount, h)
+    if os.path.exists(vaulted):
+        os.makedirs(os.path.dirname(orig_key), exist_ok=True)
+        shutil.move(vaulted, orig_key)
+    del manifest[orig_key]
+    write_manifest(mount, passphrase, manifest)
+    ok(f"Restored: {orig_key}")
+    return manifest
 
 def cmd_init(args):
     if args.vault:
@@ -175,34 +213,94 @@ def cmd_close(args):
 
 def cmd_add(args):
     st = require_open()
-    src = Path(args.file).resolve()
-    if not src.exists(): die(f"File not found: {src}")
     mount, passphrase = st["mount"], st["passphrase"]
     manifest = read_manifest(mount, passphrase)
-    key = str(src)
-    if key in manifest: die(f"Already in vault: {src}")
-    h = file_hash(key)
-    dst = os.path.join(mount, h)
-    if os.path.exists(dst): die("Hash collision -- rename the file and try again.")
-    shutil.move(str(src), dst)
-    manifest[key] = h
-    write_manifest(mount, passphrase, manifest)
-    ok(f"Added: {src}")
+    if args.file:
+        resolved = resolve_path(args.file)
+        if not os.path.exists(resolved): die(f"File not found: {resolved}")
+        add_one(resolved, mount, passphrase, manifest)
+    else:
+        print("[vault] Enter paths to add (Ctrl+C to exit)")
+        print("        Drag & drop works. Backslashes auto-stripped.")
+        manifest = read_manifest(mount, passphrase)
+        try:
+            while True:
+                p = input("path> ").strip()
+                if not p: continue
+                resolved = resolve_path(p)
+                if not os.path.exists(resolved):
+                    print(f"  [!] Not found: {resolved}")
+                    continue
+                print(f"  -> {resolved}")
+                manifest = add_one(resolved, mount, passphrase, manifest)
+        except (KeyboardInterrupt, EOFError):
+            print()
 
 def cmd_remove(args):
     st = require_open()
-    src = str(Path(args.file).resolve())
     mount, passphrase = st["mount"], st["passphrase"]
     manifest = read_manifest(mount, passphrase)
-    if src not in manifest: die(f"Not in vault: {src}")
-    h = manifest[src]
-    vaulted = os.path.join(mount, h)
-    if os.path.exists(vaulted):
-        os.makedirs(os.path.dirname(src), exist_ok=True)
-        shutil.move(vaulted, src)
-    del manifest[src]
+    if args.file:
+        resolved = resolve_path(args.file)
+        key = str(Path(resolved).resolve())
+        if key not in manifest:
+            key = str(Path(os.path.expanduser(args.file.replace('\\', ''))).resolve())
+        if key not in manifest: die(f"Not in vault: {args.file}")
+        remove_one(key, mount, passphrase, manifest)
+    else:
+        if not manifest: info("Vault is empty."); return
+        items = sorted(manifest.items())
+        try:
+            while True:
+                print(f"\n  {len(items)} file(s) in vault:\n")
+                for i, (orig, h) in enumerate(items, 1):
+                    vaulted = Path(mount) / h
+                    size = ""
+                    if vaulted.exists():
+                        sz = vaulted.stat().st_size
+                        if sz < 1024: size = f"{sz} B"
+                        elif sz < 1024*1024: size = f"{sz/1024:.1f} KB"
+                        else: size = f"{sz/(1024*1024):.1f} MB"
+                    print(f"  [{i}] {orig}  ({size})")
+                print(f"  [a] restore ALL  [q] quit")
+                choice = input("\n  pick> ").strip()
+                if choice.lower() == 'q': break
+                if choice.lower() == 'a':
+                    manifest = cmd_restore_inner(mount, passphrase, manifest)
+                    items = sorted(manifest.items())
+                    if not items: break
+                    continue
+                try:
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(items):
+                        manifest = remove_one(items[idx][0], mount, passphrase, manifest)
+                        items = sorted(manifest.items())
+                        if not items: info("Vault is now empty."); break
+                    else:
+                        print(f"  [!] Invalid number: {choice}")
+                except ValueError:
+                    print(f"  [!] Enter a number, 'a' for all, or 'q' to quit")
+        except (KeyboardInterrupt, EOFError):
+            print()
+
+def cmd_restore_inner(mount, passphrase, manifest):
+    for orig, h in list(manifest.items()):
+        vaulted = os.path.join(mount, h)
+        if os.path.exists(vaulted):
+            os.makedirs(os.path.dirname(orig), exist_ok=True)
+            shutil.move(vaulted, orig)
+            ok(f"Restored: {orig}")
+    manifest.clear()
     write_manifest(mount, passphrase, manifest)
-    ok(f"Restored: {src}")
+    return manifest
+
+def cmd_restore(args):
+    st = require_open()
+    mount, passphrase = st["mount"], st["passphrase"]
+    manifest = read_manifest(mount, passphrase)
+    if not manifest: info("Vault is already empty."); return
+    cmd_restore_inner(mount, passphrase, manifest)
+    ok("All files restored. Vault is now empty.")
 
 def cmd_list(args):
     st = require_open()
@@ -284,11 +382,12 @@ def main():
     p = subs.add_parser("open", help="Unlock and mount the default vault (or specify path)")
     p.add_argument("vault", nargs="?", help="Vault path (uses default if omitted)")
     subs.add_parser("close", help="Lock and unmount the vault")
-    p = subs.add_parser("add", help="Move a file or folder into the vault")
-    p.add_argument("file", help="Path to the file or folder")
-    p = subs.add_parser("remove", help="Restore a file from the vault")
-    p.add_argument("file", help="Original path of the file to restore")
+    p = subs.add_parser("add", help="Move files into the vault (interactive if no path)")
+    p.add_argument("file", nargs="?", help="Path to file or folder (drag & drop works)")
+    p = subs.add_parser("remove", help="Restore files (numbered list if no path)")
+    p.add_argument("file", nargs="?", help="Original path of the file to restore")
     subs.add_parser("list", help="Show all tracked files (vault must be open)")
+    subs.add_parser("restore", help="Restore ALL files (keeps vault intact)")
     subs.add_parser("status", help="Show vault location and lock state")
     subs.add_parser("uninstall", help="Restore all files, delete vault, remove macvault")
     args = parser.parse_args()
@@ -296,8 +395,8 @@ def main():
         parser.print_help()
         sys.exit(0)
     {"init": cmd_init, "open": cmd_open, "close": cmd_close, "add": cmd_add,
-     "remove": cmd_remove, "list": cmd_list, "status": cmd_status,
-     "uninstall": cmd_uninstall}[args.command](args)
+     "remove": cmd_remove, "list": cmd_list, "restore": cmd_restore,
+     "status": cmd_status, "uninstall": cmd_uninstall}[args.command](args)
 
 if __name__ == "__main__":
     main()
@@ -316,12 +415,17 @@ echo ""
 echo "  Make sure $DEST is in your PATH:"
 echo "    export PATH=\"$DEST:\$PATH\""
 echo ""
+echo "  Keep commands out of zsh history (prefix with a space):"
+echo "    echo 'setopt HIST_IGNORE_SPACE' >> ~/.zshrc && source ~/.zshrc"
+echo ""
 echo "  Then just run it to see commands:"
 echo "    macvault"
 echo ""
 echo "  Quick start:"
 echo "    macvault init       # creates ~/.macvault/<random>.sparsebundle"
 echo "    macvault open       # unlock & mount"
-echo "    macvault add ~/secret.pdf"
-echo "    macvault list"
-echo "    macvault close"
+echo "     macvault add       # interactive add (drag & drop paths)"
+echo "    macvault list       # show tracked files"
+echo "     macvault remove    # interactive remove (pick by number)"
+echo "    macvault restore    # restore ALL files at once"
+echo "    macvault close      # lock it all up"
