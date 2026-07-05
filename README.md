@@ -1,19 +1,23 @@
 ![MacVault](macvault.jpeg)
 # MacVault
 
-A portable encrypted file store for macOS. AES-256 at every layer. Zero trace when locked. Installs as a bland system utility.
+A portable encrypted file store for macOS. AES-256 at every layer. Zero trace when locked. Installs as an innocuous system utility — nothing about it suggests encryption at a glance.
 
 ## Install
 
 ```bash
-# One-liner (installs as `mvs` to ~/.local/bin)
+# One-liner (clones repo, installs `mvs` to ~/.local/bin)
 curl -sL https://raw.githubusercontent.com/paragon-William/MacVault/main/install.sh | bash
 
 # Custom name and path
-./install.sh /usr/local/bin mytool
+curl -sL https://raw.githubusercontent.com/paragon-William/MacVault/main/install.sh | bash -s /usr/local/bin mytool
+
+# Or clone manually
+git clone https://github.com/paragon-William/MacVault.git
+cd MacVault && bash build/install
 ```
 
-Requires only `python3` and `openssl` — both included with macOS.
+Requires only `python3`, `openssl`, and `git` — all included with macOS.
 
 ## Quick start
 
@@ -23,9 +27,12 @@ mvs open                        # prompts for passphrase, mounts
 mvs add ~/Documents/tax.pdf     # move a file into the store
 mvs add ~/Desktop/project/      # move a folder (drag & drop works)
 mvs list                        # show what's tracked
+mvs show                        # restore all files to origin (keeps tracking)
+# ... work on files ...
+mvs hide                        # instant re-hide (under 2 sec, any size)
 mvs remove ~/Documents/tax.pdf  # restore a file by path
 mvs remove                      # interactive: pick by number
-mvs restore                     # restore ALL files at once
+mvs restore                     # restore ALL files (clears tracking)
 mvs close                       # lock & unmount
 mvs status                      # check what's where
 ```
@@ -40,9 +47,22 @@ mvs status                      # check what's where
 | `mvs add [path]` | Move file in (interactive prompt if no path) |
 | `mvs remove [path]` | Restore file (numbered list if no path) |
 | `mvs list` | Show all tracked files |
-| `mvs restore` | Restore ALL files (keeps store intact) |
+| `mvs show` | Restore all to origin (keeps tracking — reversible with hide) |
+| `mvs hide` | Hide all tracked back into store (instant mv, any size) |
+| `mvs restore` | Restore ALL files and clear tracking |
 | `mvs status` | Show location and lock state |
 | `mvs uninstall` | Restore all, delete store, remove self |
+
+## Project structure
+
+```
+install.sh                 # Bootstrap: clones repo, runs build/install
+build/
+  install                  # Actual installer script
+  mvs                      # The Python CLI tool
+README.md
+.gitignore
+```
 
 ## How it works
 
@@ -50,16 +70,16 @@ mvs status                      # check what's where
 mvs init
   → creates AES-256 encrypted APFS sparsebundle at ~/.local/share/mvs/<random>.sparsebundle
   → creates empty AES-256-CBC encrypted manifest inside
-  → saves path to ~/.local/share/mvs/config.json
 
-mvs open
+mvs open → mvs show
   → prompts for passphrase
-  → hdiutil attach (APFS AES-256) at /tmp/.mvs_XXXXX (hidden from Finder)
-  → openssl decrypts .manifest.enc → in-memory index
+  → hdiutil attach (APFS AES-256) at /tmp/.mvs_XXXXX
+  → openssl decrypts .manifest.enc → all files restored to origin
+  → manifest preserved for re-hide
 
-mvs add ~/secret.pdf
-  → moves file into mount, named sha256(path)
-  → updates encrypted manifest
+mvs hide
+  → shutil.move all tracked files back into mount (instant — same APFS volume)
+  → re-encrypts manifest
 
 mvs close
   → re-encrypts manifest → hdiutil detach → removes temp mount

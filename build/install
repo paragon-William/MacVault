@@ -1,0 +1,47 @@
+#!/bin/bash
+# ============================================================
+# build/install — copies mvs to destination, adds to PATH
+# ============================================================
+set -euo pipefail
+
+DEST="${1:-$HOME/.local/bin}"
+NAME="${2:-mvs}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SRC="$SCRIPT_DIR/mvs"
+
+echo "[*] Installing $NAME to $DEST ..."
+
+if [ ! -f "$SRC" ]; then
+    echo "[!] build/mvs not found. Is the repo cloned correctly?"
+    exit 1
+fi
+
+command -v python3 >/dev/null 2>&1 || { echo "[!] python3 required."; exit 1; }
+command -v openssl >/dev/null 2>&1 || { echo "[!] openssl required."; exit 1; }
+
+mkdir -p "$DEST"
+cp "$SRC" "$DEST/$NAME"
+chmod +x "$DEST/$NAME"
+
+echo ""
+echo "[+] $NAME installed to $DEST/$NAME"
+echo ""
+echo "  Make sure $DEST is in your PATH:"
+echo "    export PATH=\"$DEST:\$PATH\""
+echo ""
+echo "  Keep commands out of zsh history (prefix with a space):"
+echo "    echo 'setopt HIST_IGNORE_SPACE' >> ~/.zshrc && source ~/.zshrc"
+echo ""
+echo "  Then just run it to see commands:"
+echo "    $NAME"
+echo ""
+echo "  Quick start:"
+echo "    $NAME init       # creates ~/.local/share/mvs/<random>.sparsebundle"
+echo "    $NAME open       # unlock & mount"
+echo "     $NAME add       # interactive add (drag & drop paths)"
+echo "    $NAME list       # show tracked files"
+echo "    $NAME show       # restore all files to origin (keeps tracking)"
+echo "     $NAME hide      # instant re-hide (under 2 sec, any size)"
+echo "     $NAME remove    # interactive remove (pick by number)"
+echo "    $NAME restore    # restore ALL & stop tracking"
+echo "    $NAME close      # lock it all up"
