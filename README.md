@@ -8,18 +8,19 @@ A portable encrypted file store for macOS. AES-256 at every layer. Zero trace wh
 ~~~bash
 # One-liner (clones repo, installs `mvs` to ~/.local/bin)
 curl -sL https://raw.githubusercontent.com/paragon-William/MacVault/main/install.sh | bash
-
+~~~
+~~~bash
 # Custom name and path
 curl -sL https://raw.githubusercontent.com/paragon-William/MacVault/main/install.sh | bash -s /usr/local/bin mytool
-
+~~~
+~~~bash
 # Or clone manually
 git clone https://github.com/paragon-William/MacVault.git
 cd MacVault && bash build/install
 ~~~
-
 Requires only `python3`, `openssl`, and `git` — all included with macOS.
 
-## Quick start
+## Quick Start
 
 ~~~bash
 mvs init                        # creates ~/.local/share/mvs/<random>.sparsebundle
