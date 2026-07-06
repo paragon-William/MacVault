@@ -69,7 +69,6 @@ echo "     ${CYAN}source ~/.zshrc${RESET}"
 echo "     ${CYAN}${NAME}${RESET} <command>"
 echo ""
 
-# If stdin is not a terminal, default to Mode 1 without prompting
 if [ ! -t 0 ]; then
     echo "  ${DIM}(non-interactive mode – defaulting to Mode 1)${RESET}"
     CHOICE="1"

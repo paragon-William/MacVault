@@ -9,7 +9,7 @@ import urllib.request
 import ssl
 
 # ── Auto‑update constants ─────────────────────────────────
-VERSION = "1.0.14"
+VERSION = "1.0.15"
 UPDATE_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/mvs"
 VERSION_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/version.json"
 
@@ -67,9 +67,9 @@ def require_open():
 
 def manifest_path(mount): return os.path.join(mount, ".manifest.enc")
 
-# ── Crypto helpers (PBKDF2 only, AES‑256‑GCM with temp files) ──
+# ── Crypto (PBKDF2 + AES‑256‑GCM with temp files) ─────────
 def derive_key(passphrase, salt, iterations=100000):
-    """PBKDF2 key derivation (always works)."""
+    """PBKDF2 key derivation."""
     out = subprocess.run(
         ["openssl", "kdf", "-keylen", "32", "-kdfopt", f"pass:{passphrase}",
          "-kdfopt", f"salt:{salt.hex()}", "-kdfopt", f"iter:{iterations}",
@@ -82,23 +82,19 @@ def derive_key(passphrase, salt, iterations=100000):
     return bytes.fromhex(hexstr)
 
 def run_openssl_encrypt(key_hex, iv_hex, in_path, out_path):
-    """Run openssl enc -aes-256-gcm. Returns True on success."""
     cmd = ["openssl", "enc", "-aes-256-gcm", "-K", key_hex, "-iv", iv_hex,
            "-in", in_path, "-out", out_path]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
-        print(f"{C['Y']}[!]{C['X']} OpenSSL encrypt failed: {proc.stderr.strip()}", file=sys.stderr)
-        return False
+        die(f"Encryption failed: {proc.stderr.strip()}")
     return True
 
 def run_openssl_decrypt(key_hex, iv_hex, in_path, out_path):
-    """Run openssl enc -d -aes-256-gcm. Returns True on success."""
     cmd = ["openssl", "enc", "-d", "-aes-256-gcm", "-K", key_hex, "-iv", iv_hex,
            "-in", in_path, "-out", out_path]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
-        print(f"{C['Y']}[!]{C['X']} OpenSSL decrypt failed: {proc.stderr.strip()}", file=sys.stderr)
-        return False
+        die(f"Decryption failed: {proc.stderr.strip()}")
     return True
 
 def encrypt_manifest(key, plaintext):
@@ -106,25 +102,19 @@ def encrypt_manifest(key, plaintext):
     iv_hex = nonce.hex()
     key_hex = key.hex()
 
-    # Write plaintext to a temp file
     with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.pt') as tmp_in:
         tmp_in.write(plaintext)
         in_path = tmp_in.name
 
     out_path = tempfile.mktemp(suffix='.ct')
     try:
-        if not run_openssl_encrypt(key_hex, iv_hex, in_path, out_path):
-            # Cleanup and raise
-            os.unlink(in_path)
-            if os.path.exists(out_path): os.unlink(out_path)
-            die("Encryption failed. See error above.")
+        run_openssl_encrypt(key_hex, iv_hex, in_path, out_path)
         with open(out_path, 'rb') as f:
             result = f.read()
     finally:
         os.unlink(in_path)
         if os.path.exists(out_path): os.unlink(out_path)
 
-    # OpenSSL appends 16‑byte tag
     tag = result[-16:]
     ciphertext = result[:-16]
     return nonce, ciphertext, tag
@@ -140,10 +130,7 @@ def decrypt_manifest(key, nonce, ciphertext, tag):
 
     out_path = tempfile.mktemp(suffix='.pt')
     try:
-        if not run_openssl_decrypt(key_hex, iv_hex, in_path, out_path):
-            os.unlink(in_path)
-            if os.path.exists(out_path): os.unlink(out_path)
-            die("Decryption failed. Wrong passphrase or corrupted data.")
+        run_openssl_decrypt(key_hex, iv_hex, in_path, out_path)
         with open(out_path, 'rb') as f:
             plaintext = f.read().decode()
     finally:
