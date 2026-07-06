@@ -3,13 +3,13 @@
   mvs — file utility
 """
 
-import argparse, hashlib, json, os, secrets, shutil, subprocess, sys, tempfile, time
+import argparse, hashlib, json, os, platform, secrets, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 import urllib.request
 import ssl
 
 # ── Auto‑update constants ─────────────────────────────────
-VERSION = "1.0.18"
+VERSION = "1.0.19"
 UPDATE_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/mvs"
 VERSION_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/version.json"
 
@@ -19,6 +19,7 @@ VAULT_HOME = Path.home() / ".local" / "share" / "mvs"
 CONFIG_FILE = VAULT_HOME / "config.json"
 STATE_FILE = Path(f"/tmp/.mvs_{os.getuid()}")
 VAULT_SIZE_MB = int(os.environ.get("MACVAULT_SIZE", "5120"))
+PLUGIN_DIR = Path.home() / ".mvs" / "plugins"
 
 # ── Terminal colours ──────────────────────────────────────
 C = {"R":"\033[91m","G":"\033[92m","Y":"\033[93m","B":"\033[94m","C":"\033[96m",
@@ -66,6 +67,78 @@ def require_open():
     return st
 
 def manifest_path(mount): return os.path.join(mount, ".manifest.enc")
+def log_path(mount): return os.path.join(mount, ".audit.log.enc")
+
+# ── Backend abstraction ──────────────────────────────────
+def get_backend():
+    system = platform.system()
+    if system == "Darwin":
+        return MacBackend()
+    elif system == "Linux":
+        return LinuxBackend()
+    else:
+        die(f"Unsupported platform: {system}")
+
+class MacBackend:
+    def create_volume(self, path, size_mb, passphrase):
+        subprocess.run(
+            ["hdiutil", "create", "-size", f"{size_mb}m", "-fs", "APFS",
+             "-encryption", "AES-256", "-stdinpass", "-type", "SPARSEBUNDLE",
+             "-volname", "vault", str(path)],
+            input=passphrase.encode(), check=True)
+    def attach_volume(self, path, mountpoint, passphrase):
+        subprocess.run(
+            ["hdiutil", "attach", "-stdinpass", "-mountpoint", mountpoint,
+             "-nobrowse", str(path)],
+            input=passphrase.encode(), check=True)
+    def detach_volume(self, mountpoint):
+        subprocess.run(["hdiutil", "detach", mountpoint, "-force"], check=True)
+    def hide_path(self, path):
+        subprocess.run(["chflags", "hidden", str(path)], check=False)
+    def unhide_path(self, path):
+        subprocess.run(["chflags", "nohidden", str(path)], check=False)
+    def set_immutable(self, path):
+        subprocess.run(["chflags", "uchg", str(path)], check=False)
+    def unset_immutable(self, path):
+        subprocess.run(["chflags", "nouchg", str(path)], check=False)
+
+class LinuxBackend:
+    def create_volume(self, path, size_mb, passphrase):
+        # Create a raw file, then format with cryptsetup + ext4
+        subprocess.run(["dd", "if=/dev/zero", "of="+str(path), "bs=1M", "count="+str(size_mb)], check=True)
+        subprocess.run(["cryptsetup", "luksFormat", "-q", "--pbkdf=pbkdf2", str(path)],
+                       input=passphrase.encode(), check=True)
+        subprocess.run(["cryptsetup", "luksOpen", str(path), "vault_tmp", "-d", "/dev/stdin"],
+                       input=passphrase.encode(), check=True)
+        subprocess.run(["mkfs.ext4", "/dev/mapper/vault_tmp"], check=True)
+        subprocess.run(["cryptsetup", "luksClose", "vault_tmp"], check=True)
+    def attach_volume(self, path, mountpoint, passphrase):
+        subprocess.run(["cryptsetup", "luksOpen", str(path), "vault_tmp", "-d", "/dev/stdin"],
+                       input=passphrase.encode(), check=True)
+        subprocess.run(["mount", "/dev/mapper/vault_tmp", str(mountpoint)], check=True)
+    def detach_volume(self, mountpoint):
+        subprocess.run(["umount", str(mountpoint)], check=True)
+        subprocess.run(["cryptsetup", "luksClose", "vault_tmp"], check=True)
+    def hide_path(self, path): pass  # Linux: use .hidden or chattr
+    def unhide_path(self, path): pass
+    def set_immutable(self, path): pass
+    def unset_immutable(self, path): pass
+
+backend = get_backend()
+
+# ── Keychain helpers (macOS only) ────────────────────────
+def keychain_store(name, passphrase):
+    if platform.system() != "Darwin": return
+    subprocess.run(["security", "add-generic-password", "-a", BIN_NAME, "-s", name, "-w", passphrase, "-U"],
+                   capture_output=True)
+def keychain_get(name):
+    if platform.system() != "Darwin": return None
+    try:
+        out = subprocess.run(["security", "find-generic-password", "-a", BIN_NAME, "-s", name, "-w"],
+                             capture_output=True, text=True, check=True)
+        return out.stdout.strip()
+    except subprocess.CalledProcessError:
+        return None
 
 # ── Manifest encryption (AES‑256‑CBC, PBKDF2) ─────────────
 def read_manifest(mount, passphrase):
@@ -90,17 +163,45 @@ def write_manifest(mount, passphrase, data):
         input=plain.encode(), check=True)
     os.replace(tmp, mp)
 
-# ── Robust cross‑device move (cp + rm) ────────────────────
+# ── Audit log (encrypted, append‑only) ───────────────────
+def read_log(mount, passphrase):
+    lp = log_path(mount)
+    if not os.path.exists(lp): return []
+    try:
+        out = subprocess.run(
+            ["openssl", "enc", "-d", "-aes-256-cbc", "-pbkdf2",
+             "-pass", f"pass:{passphrase}", "-in", lp],
+            capture_output=True, text=True, check=True)
+        return [json.loads(line) for line in out.stdout.strip().split("\n") if line]
+    except:
+        return []
+
+def write_log(mount, passphrase, entry):
+    lp = log_path(mount)
+    existing = read_log(mount, passphrase)
+    existing.append(entry)
+    plain = "\n".join(json.dumps(e) for e in existing)
+    tmp = lp + ".tmp"
+    subprocess.run(
+        ["openssl", "enc", "-aes-256-cbc", "-pbkdf2",
+         "-pass", f"pass:{passphrase}", "-in", "/dev/stdin", "-out", tmp],
+        input=plain.encode(), check=True)
+    os.replace(tmp, lp)
+
+# ── Plugin runner ────────────────────────────────────────
+def run_plugins(event, *args):
+    if not PLUGIN_DIR.is_dir(): return
+    for script in sorted(PLUGIN_DIR.iterdir()):
+        if script.name.startswith(event) and script.is_file() and os.access(script, os.X_OK):
+            subprocess.run([str(script)] + list(args), check=False)
+
+# ── Safe cross‑device move (cp + rm) ────────────────────
 def safe_move(src, dst):
-    """Move a file or folder from src to dst, even across volumes."""
-    # First, try an atomic rename (works if same filesystem)
     try:
         os.rename(src, dst)
         return
     except OSError:
         pass
-
-    # Copy and then delete the source
     try:
         if os.path.isdir(src):
             subprocess.run(["cp", "-a", src, dst], check=True)
@@ -109,7 +210,6 @@ def safe_move(src, dst):
             subprocess.run(["cp", "-a", src, dst], check=True)
             subprocess.run(["rm", "-f", src], check=True)
     except subprocess.CalledProcessError as e:
-        # If copy succeeded but delete failed, try to remove the destination
         if os.path.exists(dst):
             subprocess.run(["rm", "-rf", dst], check=False)
         die(f"Move failed: {e}")
@@ -125,7 +225,7 @@ def resolve_path(input_path):
     if os.path.exists(p + '.app'): return p + '.app'
     return p
 
-def add_one(src, mount, manifest):
+def add_one(src, mount, manifest, passphrase):
     key = str(Path(src).resolve())
     if key in manifest:
         print(f"  [!] Already in store: {src}")
@@ -138,9 +238,11 @@ def add_one(src, mount, manifest):
     safe_move(str(Path(src).resolve()), dst)
     manifest[key] = h
     ok(f"Added: {key}")
+    write_log(mount, passphrase, {"timestamp": time.time(), "action": "add", "src": key, "hash": h})
+    run_plugins("on-add", key)
     return True
 
-def remove_one(orig_key, mount, manifest):
+def remove_one(orig_key, mount, manifest, passphrase):
     if orig_key not in manifest:
         print(f"  [!] Not in store: {orig_key}")
         return False
@@ -151,9 +253,11 @@ def remove_one(orig_key, mount, manifest):
         safe_move(vaulted, orig_key)
     del manifest[orig_key]
     ok(f"Restored: {orig_key}")
+    write_log(mount, passphrase, {"timestamp": time.time(), "action": "remove", "src": orig_key})
+    run_plugins("on-remove", orig_key)
     return True
 
-def restore_all(mount, manifest):
+def restore_all(mount, manifest, passphrase):
     count = 0
     for orig, h in list(manifest.items()):
         vaulted = os.path.join(mount, h)
@@ -163,6 +267,8 @@ def restore_all(mount, manifest):
             ok(f"Restored: {orig}")
             count += 1
     manifest.clear()
+    write_log(mount, passphrase, {"timestamp": time.time(), "action": "restore_all"})
+    run_plugins("on-close", "restore_all")
     return count
 
 def show_all(mount, manifest):
@@ -175,7 +281,7 @@ def show_all(mount, manifest):
             count += 1
     return count
 
-def hide_all(mount, manifest):
+def hide_all(mount, manifest, passphrase):
     count = 0
     for orig, h in list(manifest.items()):
         if os.path.exists(orig):
@@ -184,6 +290,8 @@ def hide_all(mount, manifest):
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 safe_move(orig, dst)
                 count += 1
+    write_log(mount, passphrase, {"timestamp": time.time(), "action": "hide_all"})
+    run_plugins("on-close", "hide_all")
     return count
 
 # ── Auto‑update ───────────────────────────────────────────
@@ -196,88 +304,118 @@ def check_for_update():
         if os.path.exists(cp):
             os.environ["SSL_CERT_FILE"] = cp
             break
-
     info("Checking for updates...")
-
     try:
         ctx = ssl.create_default_context()
         cache_bust = f"?t={int(time.time())}"
         with urllib.request.urlopen(VERSION_URL + cache_bust, timeout=5, context=ctx) as resp:
             data = json.loads(resp.read().decode())
         remote_version = data.get("version", "0.0.0").strip()
-
         local_tuple = parse_version(VERSION)
         remote_tuple = parse_version(remote_version)
-
         if remote_tuple <= local_tuple:
             ok(f"Up to date (local v{VERSION}, remote v{remote_version})")
             return
-
         info(f"New version {remote_version} available (local v{VERSION}). Updating...")
         with urllib.request.urlopen(UPDATE_URL + cache_bust, timeout=30, context=ctx) as resp:
             new_code = resp.read()
-
         import ast
         ast.parse(new_code.decode())
-
         tmp = Path(str(SCRIPT) + ".new")
         tmp.write_bytes(new_code)
         tmp.chmod(0o755)
         os.replace(tmp, SCRIPT)
         ok(f"Updated to {remote_version}. Restarting...")
         os.execv(str(SCRIPT), sys.argv)
-
     except Exception as e:
         print(f"  {C['Y']}[!]{C['X']} Update check failed: {e}", file=sys.stderr)
+
+# ── Multi‑vault commands ──────────────────────────────────
+def get_vault_list():
+    cfg = load_config()
+    return cfg.get("vaults", {})
+
+def get_current_vault_name():
+    cfg = load_config()
+    return cfg.get("current", None)
+
+def get_current_vault_path():
+    name = get_current_vault_name()
+    if not name: return None
+    vaults = get_vault_list()
+    return vaults.get(name)
+
+def set_current_vault(name):
+    cfg = load_config()
+    if name not in cfg.get("vaults", {}):
+        die(f"Vault '{name}' does not exist.")
+    cfg["current"] = name
+    save_config(cfg)
+    ok(f"Current vault set to '{name}'.")
+
+def cmd_vault(args):
+    if args.subcommand == "create":
+        name = args.name
+        vaults = get_vault_list()
+        if name in vaults: die(f"Vault '{name}' already exists.")
+        path = VAULT_HOME / f"{name}.sparsebundle"
+        passphrase = getpass_verify("Set passphrase: ")
+        backend.create_volume(path, VAULT_SIZE_MB, passphrase)
+        mount = tempfile.mkdtemp(prefix=".mvs_", dir="/tmp")
+        backend.attach_volume(path, mount, passphrase)
+        write_manifest(mount, passphrase, {})
+        write_log(mount, passphrase, [])
+        backend.detach_volume(mount)
+        os.rmdir(mount)
+        cfg = load_config()
+        cfg.setdefault("vaults", {})[name] = str(path)
+        if not cfg.get("current"):
+            cfg["current"] = name
+        save_config(cfg)
+        keychain_store(name, passphrase)
+        ok(f"Vault '{name}' created at {path}")
+    elif args.subcommand == "use":
+        set_current_vault(args.name)
+    elif args.subcommand == "list":
+        vaults = get_vault_list()
+        if not vaults:
+            info("No vaults configured.")
+            return
+        current = get_current_vault_name()
+        for name, path in vaults.items():
+            marker = " *" if name == current else ""
+            print(f"  {name}{marker} -> {path}")
 
 # ── Commands ──────────────────────────────────────────────
 def cmd_version(args):
     print(f"mvs version {VERSION}")
 
 def cmd_init(args):
-    if args.vault: vault = Path(args.vault).resolve()
-    else:
-        VAULT_HOME.mkdir(parents=True, exist_ok=True)
-        vault = VAULT_HOME / random_basename()
-    if vault.exists(): die(f"Already exists: {vault}")
-    info(f"Creating store: {vault}")
-    passphrase = getpass_verify("Set passphrase: ")
-    subprocess.run(
-        ["hdiutil", "create", "-size", f"{VAULT_SIZE_MB}m", "-fs", "APFS",
-         "-encryption", "AES-256", "-stdinpass", "-type", "SPARSEBUNDLE",
-         "-volname", "vault", str(vault)],
-        input=passphrase.encode(), check=True)
-    mount = tempfile.mkdtemp(prefix=".mvs_", dir="/tmp")
-    subprocess.run(
-        ["hdiutil", "attach", "-stdinpass", "-mountpoint", mount, "-nobrowse", str(vault)],
-        input=passphrase.encode(), check=True)
-    write_manifest(mount, passphrase, {})
-    subprocess.run(["hdiutil", "detach", mount], check=True)
-    os.rmdir(mount)
-    set_default_vault(str(vault))
-    ok(f"Store ready: {vault}")
-    info(f"Size: {VAULT_SIZE_MB} MB  |  Passphrase: only you know it. No recovery.")
+    # Legacy: create a single vault named "default"
+    cmd_vault(argparse.Namespace(subcommand="create", name="default"))
 
 def cmd_open(args):
-    if args.vault: vault_path = str(Path(args.vault).resolve())
-    else:
-        vault_path = get_default_vault()
-        if not vault_path: die("No store found. Run '" + BIN_NAME + " init' first.")
-    vault = Path(vault_path)
-    if not vault.exists(): die(f"Store not found: {vault}")
-    if read_state(): die("A store is already open. Run '" + BIN_NAME + " close' first.")
-    passphrase = getpass_verify("Passphrase: ")
+    name = args.vault if args.vault else get_current_vault_name()
+    if not name: die("No vault selected. Use 'mvs vault use <name>' or create one with 'mvs init'.")
+    vaults = get_vault_list()
+    path = vaults.get(name)
+    if not path: die(f"Vault '{name}' not found.")
+    path = Path(path)
+    if not path.exists(): die(f"Vault file missing: {path}")
+    if read_state(): die("A vault is already open. Run 'mvs close' first.")
+    passphrase = keychain_get(name) or getpass_verify("Passphrase: ")
+    if not keychain_get(name):
+        keychain_store(name, passphrase)
     mount = tempfile.mkdtemp(prefix=".mvs_", dir="/tmp")
     try:
-        subprocess.run(
-            ["hdiutil", "attach", "-stdinpass", "-mountpoint", mount, "-nobrowse", str(vault)],
-            input=passphrase.encode(), check=True, capture_output=True)
+        backend.attach_volume(path, mount, passphrase)
     except subprocess.CalledProcessError:
         os.rmdir(mount)
-        die("Wrong passphrase or corrupted store.")
+        die("Wrong passphrase or corrupted vault.")
     manifest = read_manifest(mount, passphrase)
-    write_state({"vault": str(vault), "mount": mount, "passphrase": passphrase})
-    ok(f"Store open -- {len(manifest)} file(s) tracked.")
+    write_state({"vault": str(path), "mount": mount, "passphrase": passphrase})
+    ok(f"Vault '{name}' open -- {len(manifest)} file(s) tracked.")
+    run_plugins("on-open")
 
 def cmd_close(args):
     st = require_open()
@@ -286,10 +424,11 @@ def cmd_close(args):
     manifest = read_manifest(mount, passphrase) if os.path.exists(mp) else {}
     if manifest:
         write_manifest(mount, passphrase, manifest)
-    subprocess.run(["hdiutil", "detach", mount, "-force"], check=True)
+    backend.detach_volume(mount)
     os.rmdir(mount)
     clear_state()
-    ok(f"Store locked -- {len(manifest)} file(s) secured.")
+    ok(f"Vault locked -- {len(manifest)} file(s) secured.")
+    run_plugins("on-close")
 
 def cmd_add(args):
     st = require_open()
@@ -298,7 +437,7 @@ def cmd_add(args):
     if args.file:
         resolved = resolve_path(args.file)
         if not os.path.exists(resolved): die(f"File not found: {resolved}")
-        if add_one(resolved, mount, manifest):
+        if add_one(resolved, mount, manifest, passphrase):
             write_manifest(mount, passphrase, manifest)
     else:
         print(f"{C['BD']}add — drag paths or type, Ctrl+C to exit{C['X']}")
@@ -311,7 +450,7 @@ def cmd_add(args):
                     print(f"  [!] Not found: {resolved}")
                     continue
                 print(f"  -> {resolved}")
-                if add_one(resolved, mount, manifest):
+                if add_one(resolved, mount, manifest, passphrase):
                     write_manifest(mount, passphrase, manifest)
         except (KeyboardInterrupt, EOFError):
             print()
@@ -325,15 +464,15 @@ def cmd_remove(args):
         key = str(Path(resolved).resolve())
         if key not in manifest:
             key = str(Path(os.path.expanduser(args.file.replace('\\', ''))).resolve())
-        if key not in manifest: die(f"Not in store: {args.file}")
-        if remove_one(key, mount, manifest):
+        if key not in manifest: die(f"Not in vault: {args.file}")
+        if remove_one(key, mount, manifest, passphrase):
             write_manifest(mount, passphrase, manifest)
     else:
-        if not manifest: info("Store is empty."); return
+        if not manifest: info("Vault is empty."); return
         items = sorted(manifest.items())
         try:
             while True:
-                print(f"\n  {C['BD']}{len(items)} file(s) in store:{C['X']}\n")
+                print(f"\n  {C['BD']}{len(items)} file(s) in vault:{C['X']}\n")
                 for i, (orig, h) in enumerate(items, 1):
                     vaulted = Path(mount) / h
                     size = ""
@@ -347,7 +486,7 @@ def cmd_remove(args):
                 choice = input("\n  pick> ").strip()
                 if choice.lower() == 'q': break
                 if choice.lower() == 'a':
-                    n = restore_all(mount, manifest)
+                    n = restore_all(mount, manifest, passphrase)
                     write_manifest(mount, passphrase, manifest)
                     if n > 0: ok(f"Restored {n} file(s).")
                     if not manifest: break
@@ -356,11 +495,11 @@ def cmd_remove(args):
                 try:
                     idx = int(choice) - 1
                     if 0 <= idx < len(items):
-                        if remove_one(items[idx][0], mount, manifest):
+                        if remove_one(items[idx][0], mount, manifest, passphrase):
                             write_manifest(mount, passphrase, manifest)
                         items = sorted(manifest.items())
                         if not items:
-                            info("Store is now empty.")
+                            info("Vault is now empty.")
                             break
                     else:
                         print(f"  [!] Invalid number: {choice}")
@@ -373,8 +512,8 @@ def cmd_restore(args):
     st = require_open()
     mount, passphrase = st["mount"], st["passphrase"]
     manifest = read_manifest(mount, passphrase)
-    if not manifest: info("Store is already empty."); return
-    n = restore_all(mount, manifest)
+    if not manifest: info("Vault is already empty."); return
+    n = restore_all(mount, manifest, passphrase)
     write_manifest(mount, passphrase, manifest)
     if n > 0: ok(f"Restored {n} file(s). Vault is now empty.")
 
@@ -391,7 +530,7 @@ def cmd_hide(args):
     mount, passphrase = st["mount"], st["passphrase"]
     manifest = read_manifest(mount, passphrase)
     if not manifest: info("Nothing tracked."); return
-    n = hide_all(mount, manifest)
+    n = hide_all(mount, manifest, passphrase)
     if n > 0: ok(f"Hid {n} file(s).")
 
 def cmd_list(args):
@@ -413,22 +552,55 @@ def cmd_list(args):
     print()
 
 def cmd_status(args):
-    v = get_default_vault()
-    if v:
-        p = Path(v)
-        if p.exists():
+    current = get_current_vault_name()
+    if current:
+        path = get_current_vault_path()
+        p = Path(path) if path else None
+        if p and p.exists():
             sz = sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) if p.is_dir() else p.stat().st_size
-            print(f"  {C['BD']}Default store:{C['X']} {v}")
+            print(f"  {C['BD']}Current vault:{C['X']} {current} -> {path}")
             print(f"  Size on disk:  {sz / (1024*1024):.1f} MB")
         else:
-            print(f"  {C['BD']}Default store:{C['X']} {v}  {C['R']}(missing!){C['X']}")
+            print(f"  {C['BD']}Current vault:{C['X']} {current} -> (file missing)")
     else:
-        print(f"  {C['D']}No store configured. Run '{BIN_NAME} init' to create one.{C['X']}")
+        print(f"  {C['D']}No vault selected. Run '{BIN_NAME} init' to create one.{C['X']}")
     st = read_state()
     if st:
         print(f"  {C['BD']}State:{C['X']}         {C['G']}OPEN{C['X']} -> {st['mount']}")
     else:
         print(f"  {C['BD']}State:{C['X']}         {C['R']}locked{C['X']}")
+
+def cmd_log(args):
+    st = require_open()
+    mount, passphrase = st["mount"], st["passphrase"]
+    entries = read_log(mount, passphrase)
+    if not entries:
+        info("Audit log is empty.")
+        return
+    for entry in entries:
+        ts = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(entry["timestamp"]))
+        print(f"  {ts}  {entry['action']}")
+        for k, v in entry.items():
+            if k not in ("timestamp", "action"):
+                print(f"        {k}: {v}")
+
+def cmd_disguise(args):
+    vaults = get_vault_list()
+    name = args.name or get_current_vault_name()
+    if not name: die("No vault selected.")
+    path = vaults.get(name)
+    if not path: die(f"Vault '{name}' not found.")
+    new_path = Path.home() / "Library" / "Caches" / "com.apple.metadata.plist"
+    if Path(new_path).exists():
+        die("Stealth path already exists. Remove it manually first.")
+    shutil.move(path, new_path)
+    vaults[name] = str(new_path)
+    cfg = load_config()
+    cfg["vaults"] = vaults
+    save_config(cfg)
+    backend.hide_path(new_path)
+    backend.set_immutable(new_path)
+    ok(f"Vault disguised as {new_path}")
 
 def cmd_uninstall(args):
     st = read_state()
@@ -437,13 +609,13 @@ def cmd_uninstall(args):
         mount, passphrase = st["mount"], st["passphrase"]
         vault_path = st["vault"]
         manifest = read_manifest(mount, passphrase)
-        n = restore_all(mount, manifest)
+        n = restore_all(mount, manifest, passphrase)
         write_manifest(mount, passphrase, manifest)
-        subprocess.run(["hdiutil", "detach", mount, "-force"], check=True)
+        backend.detach_volume(mount)
         os.rmdir(mount)
         clear_state()
     else:
-        vault_path = get_default_vault()
+        vault_path = get_current_vault_path()
     if vault_path:
         p = Path(vault_path)
         if p.exists():
@@ -457,15 +629,16 @@ def cmd_uninstall(args):
     SCRIPT.unlink(missing_ok=True)
     ok("Uninstalled. No trace remains.")
 
+# ── Main ──────────────────────────────────────────────────
 def main():
     check_for_update()
     parser = argparse.ArgumentParser(description="file utility", usage=BIN_NAME + " <command> [args]")
     subs = parser.add_subparsers(dest="command")
     subs.add_parser("version", help="Show version number")
-    p = subs.add_parser("init", help="Create a new store")
-    p.add_argument("vault", nargs="?", help="Custom path (optional)")
-    p = subs.add_parser("open", help="Unlock and mount the default store")
-    p.add_argument("vault", nargs="?", help="Store path (uses default if omitted)")
+    p = subs.add_parser("init", help="Create a new vault (default name 'default')")
+    p.add_argument("name", nargs="?", default="default", help="Vault name")
+    p = subs.add_parser("open", help="Unlock and mount the current vault")
+    p.add_argument("vault", nargs="?", help="Vault name (uses current if omitted)")
     subs.add_parser("close", help="Lock and unmount")
     p = subs.add_parser("add", help="Move files in (interactive if no path)")
     p.add_argument("file", nargs="?", help="Path to file or folder")
@@ -474,16 +647,31 @@ def main():
     subs.add_parser("list", help="Show tracked files")
     subs.add_parser("restore", help="Restore ALL files")
     subs.add_parser("show", help="Restore all tracked files to origin (keeps tracking)")
-    subs.add_parser("hide", help="Hide all tracked files back into store (instant)")
-    subs.add_parser("status", help="Show location and lock state")
-    subs.add_parser("uninstall", help="Restore all, delete store, remove self")
+    subs.add_parser("hide", help="Hide all tracked files back into vault (instant)")
+    subs.add_parser("status", help="Show vault location and lock state")
+    subs.add_parser("log", help="Show audit log")
+    subs.add_parser("uninstall", help="Restore all, delete vault, remove self")
+    # Vault management
+    p = subs.add_parser("vault", help="Manage vaults")
+    vault_subs = p.add_subparsers(dest="subcommand")
+    vp = vault_subs.add_parser("create", help="Create a new vault")
+    vp.add_argument("name", help="Vault name")
+    vp = vault_subs.add_parser("use", help="Switch to a different vault")
+    vp.add_argument("name", help="Vault name")
+    vault_subs.add_parser("list", help="List all vaults")
+    # Disguise
+    p = subs.add_parser("disguise", help="Move vault to stealthy system path")
+    p.add_argument("name", nargs="?", help="Vault name (uses current if omitted)")
     args = parser.parse_args()
     if not args.command: parser.print_help(); sys.exit(0)
-    {"version": cmd_version,
-     "init": cmd_init, "open": cmd_open, "close": cmd_close,
-     "add": cmd_add, "remove": cmd_remove, "list": cmd_list,
-     "restore": cmd_restore, "show": cmd_show, "hide": cmd_hide,
-     "status": cmd_status, "uninstall": cmd_uninstall}[args.command](args)
+    cmds = {
+        "version": cmd_version, "init": cmd_init, "open": cmd_open, "close": cmd_close,
+        "add": cmd_add, "remove": cmd_remove, "list": cmd_list,
+        "restore": cmd_restore, "show": cmd_show, "hide": cmd_hide,
+        "status": cmd_status, "log": cmd_log, "uninstall": cmd_uninstall,
+        "vault": cmd_vault, "disguise": cmd_disguise
+    }
+    cmds[args.command](args)
 
 if __name__ == "__main__":
     main()
