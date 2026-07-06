@@ -8,7 +8,7 @@ from pathlib import Path
 import urllib.request
 
 # ── Auto‑update constants ─────────────────────────────────
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 UPDATE_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/mvs"
 VERSION_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/version.json"
 
@@ -33,7 +33,7 @@ def getpass_verify(prompt="Passphrase: "):
     p1 = getpass.getpass(prompt)
     p2 = getpass.getpass("Confirm:   ")
     if p1 != p2: die("Passphrases do not match.")
-    if len(p1) < 8: die("Passphrase must be at least 8 characters.")
+    if len(p1) < 8: die("Passphrase must be at least 9 characters.")
     return p1
 
 def load_config():
