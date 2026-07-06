@@ -9,7 +9,7 @@ import urllib.request
 import ssl
 
 # ── Auto‑update constants ─────────────────────────────────
-VERSION = "1.0.13"
+VERSION = "1.0.14"
 UPDATE_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/mvs"
 VERSION_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/version.json"
 
@@ -67,23 +67,9 @@ def require_open():
 
 def manifest_path(mount): return os.path.join(mount, ".manifest.enc")
 
-# ── Crypto helpers ────────────────────────────────────────
+# ── Crypto helpers (PBKDF2 only, AES‑256‑GCM with temp files) ──
 def derive_key(passphrase, salt, iterations=100000):
-    """Derive a 256-bit key. Tries Argon2id first, falls back to PBKDF2."""
-    try:
-        out = subprocess.run(
-            ["openssl", "kdf", "-keylen", "32", "-kdfopt", f"pass:{passphrase}",
-             "-kdfopt", f"salt:{salt.hex()}", "-kdfopt", "iter:4",
-             "-kdfopt", "memcost:65536", "-kdfopt", "threads:4",
-             "-kdfopt", "type:id", "ARGON2ID"],
-            capture_output=True, text=True, check=True)
-        hexstr = out.stdout.strip()
-        if hexstr.startswith('0x'):
-            hexstr = hexstr[2:]
-        hexstr = ''.join(c for c in hexstr if c in '0123456789abcdefABCDEF')
-        return bytes.fromhex(hexstr)
-    except (subprocess.CalledProcessError, ValueError):
-        pass
+    """PBKDF2 key derivation (always works)."""
     out = subprocess.run(
         ["openssl", "kdf", "-keylen", "32", "-kdfopt", f"pass:{passphrase}",
          "-kdfopt", f"salt:{salt.hex()}", "-kdfopt", f"iter:{iterations}",
@@ -95,48 +81,74 @@ def derive_key(passphrase, salt, iterations=100000):
     hexstr = ''.join(c for c in hexstr if c in '0123456789abcdefABCDEF')
     return bytes.fromhex(hexstr)
 
+def run_openssl_encrypt(key_hex, iv_hex, in_path, out_path):
+    """Run openssl enc -aes-256-gcm. Returns True on success."""
+    cmd = ["openssl", "enc", "-aes-256-gcm", "-K", key_hex, "-iv", iv_hex,
+           "-in", in_path, "-out", out_path]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        print(f"{C['Y']}[!]{C['X']} OpenSSL encrypt failed: {proc.stderr.strip()}", file=sys.stderr)
+        return False
+    return True
+
+def run_openssl_decrypt(key_hex, iv_hex, in_path, out_path):
+    """Run openssl enc -d -aes-256-gcm. Returns True on success."""
+    cmd = ["openssl", "enc", "-d", "-aes-256-gcm", "-K", key_hex, "-iv", iv_hex,
+           "-in", in_path, "-out", out_path]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        print(f"{C['Y']}[!]{C['X']} OpenSSL decrypt failed: {proc.stderr.strip()}", file=sys.stderr)
+        return False
+    return True
+
 def encrypt_manifest(key, plaintext):
     nonce = secrets.token_bytes(12)
     iv_hex = nonce.hex()
-    # Write plaintext to a temp file to avoid stdin issues
-    tmp_in = tempfile.NamedTemporaryFile(delete=False)
-    tmp_in.write(plaintext.encode())
-    tmp_in.close()
-    tmp_out = tempfile.NamedTemporaryFile(delete=False)
-    tmp_out.close()
+    key_hex = key.hex()
+
+    # Write plaintext to a temp file
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.pt') as tmp_in:
+        tmp_in.write(plaintext)
+        in_path = tmp_in.name
+
+    out_path = tempfile.mktemp(suffix='.ct')
     try:
-        subprocess.run(
-            ["openssl", "enc", "-aes-256-gcm", "-K", key.hex(), "-iv", iv_hex,
-             "-in", tmp_in.name, "-out", tmp_out.name],
-            check=True, capture_output=True)
-        with open(tmp_out.name, "rb") as f:
+        if not run_openssl_encrypt(key_hex, iv_hex, in_path, out_path):
+            # Cleanup and raise
+            os.unlink(in_path)
+            if os.path.exists(out_path): os.unlink(out_path)
+            die("Encryption failed. See error above.")
+        with open(out_path, 'rb') as f:
             result = f.read()
     finally:
-        os.unlink(tmp_in.name)
-        os.unlink(tmp_out.name)
-    # OpenSSL appends the 16-byte tag at the end
+        os.unlink(in_path)
+        if os.path.exists(out_path): os.unlink(out_path)
+
+    # OpenSSL appends 16‑byte tag
     tag = result[-16:]
     ciphertext = result[:-16]
     return nonce, ciphertext, tag
 
 def decrypt_manifest(key, nonce, ciphertext, tag):
     iv_hex = nonce.hex()
+    key_hex = key.hex()
     input_data = ciphertext + tag
-    tmp_in = tempfile.NamedTemporaryFile(delete=False)
-    tmp_in.write(input_data)
-    tmp_in.close()
-    tmp_out = tempfile.NamedTemporaryFile(delete=False)
-    tmp_out.close()
+
+    with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.ct') as tmp_in:
+        tmp_in.write(input_data)
+        in_path = tmp_in.name
+
+    out_path = tempfile.mktemp(suffix='.pt')
     try:
-        subprocess.run(
-            ["openssl", "enc", "-d", "-aes-256-gcm", "-K", key.hex(), "-iv", iv_hex,
-             "-in", tmp_in.name, "-out", tmp_out.name],
-            check=True, capture_output=True)
-        with open(tmp_out.name, "rb") as f:
+        if not run_openssl_decrypt(key_hex, iv_hex, in_path, out_path):
+            os.unlink(in_path)
+            if os.path.exists(out_path): os.unlink(out_path)
+            die("Decryption failed. Wrong passphrase or corrupted data.")
+        with open(out_path, 'rb') as f:
             plaintext = f.read().decode()
     finally:
-        os.unlink(tmp_in.name)
-        os.unlink(tmp_out.name)
+        os.unlink(in_path)
+        if os.path.exists(out_path): os.unlink(out_path)
     return plaintext
 
 def read_manifest(mount, passphrase):

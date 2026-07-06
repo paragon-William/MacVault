@@ -1,6 +1,7 @@
 ![MacVault](macvault.jpeg)
 # MacVault
-# Bug Patch 1.0.13
+# Bug Patch 1.0.14
+
 A portable encrypted file store for macOS. AES-256 at every layer. Zero trace when locked. Installs as an innocuous system utility — nothing about it suggests encryption at a glance.
 
 ## Install
@@ -58,7 +59,7 @@ mvs status                      # check what's where
 ~~~
 install.sh                 # Bootstrap: clones repo, runs build/install
 build/
-  install                  # Actual installer script
+  install                  # Actual installer script (if present)
   mvs                      # The Python CLI tool
   version.json             # Remote version info for auto-update
 README.md
@@ -90,7 +91,7 @@ mvs close
 ## Security
 
 - **Dual-layer AES-256**: APFS image encryption + `openssl enc -aes-256-gcm` manifest encryption with authentication. Even when mounted, file paths are ciphertext.
-- **Argon2id key derivation**: Memory-hard key derivation prevents GPU-accelerated brute-force attacks (falls back to PBKDF2 on older OpenSSL).
+- **PBKDF2 key derivation**: 100,000 iterations of PBKDF2 for manifest key derivation (Argon2id automatically attempted on OpenSSL 3.2+).
 - **Atomic manifest writes**: Manifest is never overwritten in place — writes go to a temp file first, then atomically swapped to prevent corruption.
 - **Passphrase never stored**: Provided at runtime. No recovery — lose it, lose the data.
 - **No daemon, no root**: Runs only when invoked. No background processes.
