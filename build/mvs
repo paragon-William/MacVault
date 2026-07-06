@@ -9,7 +9,7 @@ import urllib.request
 import ssl
 
 # ── Auto‑update constants ─────────────────────────────────
-VERSION = "1.0.8"
+VERSION = "1.0.9"
 UPDATE_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/mvs"
 VERSION_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/version.json"
 
@@ -476,7 +476,7 @@ def main():
     check_for_update()
     parser = argparse.ArgumentParser(description="file utility", usage=BIN_NAME + " <command> [args]")
     subs = parser.add_subparsers(dest="command")
-    p = subs.add_parser("init", help="Create a new storeeeeeee")
+    p = subs.add_parser("init", help="Create a new storeee")
     p.add_argument("vault", nargs="?", help="Custom path (optional)")
     p = subs.add_parser("open", help="Unlock and mount the default store")
     p.add_argument("vault", nargs="?", help="Store path (uses default if omitted)")
