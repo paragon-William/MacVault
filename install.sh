@@ -52,7 +52,7 @@ sleep 0.2
 echo "  ${GREEN}Done.${RESET}"
 
 echo ""
-echo "  ${GREEN}${BOLD}MacVault is installed.${RESET}"
+echo "  ${GREEN}${BOLD}MacVault is installed Tester.${RESET}"
 echo ""
 echo "  ${BOLD}Choose how you want to run it:${RESET}"
 echo ""
