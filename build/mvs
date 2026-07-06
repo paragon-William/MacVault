@@ -3,13 +3,13 @@
   mvs — file utility
 """
 
-import argparse, hashlib, json, os, secrets, shutil, subprocess, sys, tempfile
+import argparse, hashlib, json, os, secrets, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 import urllib.request
 import ssl
 
 # ── Auto‑update constants ─────────────────────────────────
-VERSION = "1.0.9"
+VERSION = "1.0.10"
 UPDATE_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/mvs"
 VERSION_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/version.json"
 
@@ -149,7 +149,7 @@ def resolve_path(input_path):
 def add_one(src, mount, manifest):
     key = str(Path(src).resolve())
     if key in manifest:
-        print(f"  [!] Already in store: {src}")
+        print(f"  [!] Already in DEEPSEEK: {src}")
         return False
     h = file_hash(key)
     dst = os.path.join(mount, h)
@@ -163,7 +163,7 @@ def add_one(src, mount, manifest):
 
 def remove_one(orig_key, mount, manifest):
     if orig_key not in manifest:
-        print(f"  [!] Not in store: {orig_key}")
+        print(f"  [!] Not in DEEPSEEK: {orig_key}")
         return False
     h = manifest[orig_key]
     vaulted = os.path.join(mount, h)
@@ -212,7 +212,6 @@ def parse_version(v: str):
     return tuple(int(x) for x in v.strip().split("."))
 
 def check_for_update():
-    # Fix SSL cert issue on macOS Python
     cert_paths = ["/etc/ssl/cert.pem", "/usr/local/etc/openssl@3/cert.pem", "/usr/local/etc/openssl@1.1/cert.pem"]
     for cp in cert_paths:
         if os.path.exists(cp):
@@ -223,16 +222,20 @@ def check_for_update():
 
     try:
         ctx = ssl.create_default_context()
-        with urllib.request.urlopen(VERSION_URL, timeout=5, context=ctx) as resp:
+        cache_bust = f"?t={int(time.time())}"
+        with urllib.request.urlopen(VERSION_URL + cache_bust, timeout=5, context=ctx) as resp:
             data = json.loads(resp.read().decode())
-        remote_version = data.get("version", "0.0.0")
+        remote_version = data.get("version", "0.0.0").strip()
 
-        if parse_version(remote_version) <= parse_version(VERSION):
-            ok(f"Up to date (v{VERSION})")
+        local_tuple = parse_version(VERSION)
+        remote_tuple = parse_version(remote_version)
+
+        if remote_tuple <= local_tuple:
+            ok(f"Up to date (local v{VERSION}, remote v{remote_version})")
             return
 
-        info(f"New version {remote_version} available. Updating...")
-        with urllib.request.urlopen(UPDATE_URL, timeout=30, context=ctx) as resp:
+        info(f"New version {remote_version} available (local v{VERSION}). Updating...")
+        with urllib.request.urlopen(UPDATE_URL + cache_bust, timeout=30, context=ctx) as resp:
             new_code = resp.read()
 
         import ast
@@ -249,6 +252,9 @@ def check_for_update():
         print(f"  {C['Y']}[!]{C['X']} Update check failed: {e}", file=sys.stderr)
 
 # ── Commands ──────────────────────────────────────────────
+def cmd_version(args):
+    print(f"mvs version {VERSION}")
+
 def cmd_init(args):
     if args.vault: vault = Path(args.vault).resolve()
     else:
@@ -476,24 +482,26 @@ def main():
     check_for_update()
     parser = argparse.ArgumentParser(description="file utility", usage=BIN_NAME + " <command> [args]")
     subs = parser.add_subparsers(dest="command")
-    p = subs.add_parser("init", help="Create a new storeee")
+    subs.add_parser("version", help="Show version number")
+    p = subs.add_parser("init", help="Create a new DEEPSEEK store")
     p.add_argument("vault", nargs="?", help="Custom path (optional)")
     p = subs.add_parser("open", help="Unlock and mount the default store")
     p.add_argument("vault", nargs="?", help="Store path (uses default if omitted)")
     subs.add_parser("close", help="Lock and unmount")
-    p = subs.add_parser("add", help="Move files in (interactive if no path)")
+    p = subs.add_parser("add", help="Move files into the DEEPSEEK store")
     p.add_argument("file", nargs="?", help="Path to file or folder")
-    p = subs.add_parser("remove", help="Restore files (numbered list if no path)")
+    p = subs.add_parser("remove", help="Restore files from DEEPSEEK (numbered list if no path)")
     p.add_argument("file", nargs="?", help="Original path to restore")
     subs.add_parser("list", help="Show tracked files")
     subs.add_parser("restore", help="Restore ALL files")
     subs.add_parser("show", help="Restore all tracked files to origin (keeps tracking)")
-    subs.add_parser("hide", help="Hide all tracked files back into store (instant)")
+    subs.add_parser("hide", help="Hide all tracked files back into DEEPSEEK (instant)")
     subs.add_parser("status", help="Show location and lock state")
     subs.add_parser("uninstall", help="Restore all, delete store, remove self")
     args = parser.parse_args()
     if not args.command: parser.print_help(); sys.exit(0)
-    {"init": cmd_init, "open": cmd_open, "close": cmd_close,
+    {"version": cmd_version,
+     "init": cmd_init, "open": cmd_open, "close": cmd_close,
      "add": cmd_add, "remove": cmd_remove, "list": cmd_list,
      "restore": cmd_restore, "show": cmd_show, "hide": cmd_hide,
      "status": cmd_status, "uninstall": cmd_uninstall}[args.command](args)
