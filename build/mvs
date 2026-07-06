@@ -9,7 +9,7 @@ import urllib.request
 import ssl
 
 # ── Auto‑update constants ─────────────────────────────────
-VERSION = "1.0.16"
+VERSION = "1.0.17"
 UPDATE_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/mvs"
 VERSION_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/version.json"
 
@@ -90,6 +90,26 @@ def write_manifest(mount, passphrase, data):
         input=plain.encode(), check=True)
     os.replace(tmp, mp)
 
+# ── Safe cross‑device move (copy + delete) ───────────────
+def safe_move(src, dst):
+    """Move src to dst, handling cross‑device and permission errors."""
+    try:
+        if os.path.isdir(src):
+            shutil.copytree(src, dst, symlinks=True, ignore_dangling_symlinks=True,
+                           dirs_exist_ok=True, copy_function=shutil.copy2)
+            shutil.rmtree(src, ignore_errors=True)
+        else:
+            shutil.copy2(src, dst)
+            os.unlink(src)
+    except Exception as e:
+        # If anything goes wrong, try to clean up and report
+        if os.path.exists(dst):
+            if os.path.isdir(dst):
+                shutil.rmtree(dst, ignore_errors=True)
+            else:
+                os.unlink(dst)
+        die(f"Failed to move: {e}")
+
 # ── Core operations ───────────────────────────────────────
 def file_hash(path): return hashlib.sha256(str(path).encode()).hexdigest()[:16]
 def random_basename(): return f"{secrets.token_hex(10)}.sparsebundle"
@@ -111,7 +131,7 @@ def add_one(src, mount, manifest):
     if os.path.exists(dst):
         print(f"  [!] Hash collision -- rename the file and try again.")
         return False
-    shutil.move(str(Path(src).resolve()), dst)
+    safe_move(str(Path(src).resolve()), dst)
     manifest[key] = h
     ok(f"Added: {key}")
     return True
@@ -124,7 +144,7 @@ def remove_one(orig_key, mount, manifest):
     vaulted = os.path.join(mount, h)
     if os.path.exists(vaulted):
         os.makedirs(os.path.dirname(orig_key), exist_ok=True)
-        shutil.move(vaulted, orig_key)
+        safe_move(vaulted, orig_key)
     del manifest[orig_key]
     ok(f"Restored: {orig_key}")
     return True
@@ -135,7 +155,7 @@ def restore_all(mount, manifest):
         vaulted = os.path.join(mount, h)
         if os.path.exists(vaulted):
             os.makedirs(os.path.dirname(orig), exist_ok=True)
-            shutil.move(vaulted, orig)
+            safe_move(vaulted, orig)
             ok(f"Restored: {orig}")
             count += 1
     manifest.clear()
@@ -147,7 +167,7 @@ def show_all(mount, manifest):
         vaulted = os.path.join(mount, h)
         if os.path.exists(vaulted):
             os.makedirs(os.path.dirname(orig), exist_ok=True)
-            shutil.move(vaulted, orig)
+            safe_move(vaulted, orig)
             count += 1
     return count
 
@@ -158,7 +178,7 @@ def hide_all(mount, manifest):
             dst = os.path.join(mount, h)
             if not os.path.exists(dst):
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
-                shutil.move(orig, dst)
+                safe_move(orig, dst)
                 count += 1
     return count
 
