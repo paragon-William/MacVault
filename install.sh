@@ -68,8 +68,21 @@ echo "     ${CYAN}echo 'export PATH=\"${DEST}:\$PATH\"' >> ~/.zshrc${RESET}"
 echo "     ${CYAN}source ~/.zshrc${RESET}"
 echo "     ${CYAN}${NAME}${RESET} <command>"
 echo ""
-printf "  ${YELLOW}Enter 1, 2, or 3: ${RESET}"
-read -r CHOICE
+
+# If stdin is not a terminal, default to Mode 1 without prompting
+if [ ! -t 0 ]; then
+    echo "  ${DIM}(non-interactive mode – defaulting to Mode 1)${RESET}"
+    CHOICE="1"
+else
+    CHOICE=""
+    while [[ ! "$CHOICE" =~ ^[123]$ ]]; do
+        printf "  ${YELLOW}Enter 1, 2, or 3: ${RESET}"
+        read -r CHOICE
+        if [[ ! "$CHOICE" =~ ^[123]$ ]]; then
+            echo "  ${DIM}Please enter 1, 2, or 3.${RESET}"
+        fi
+    done
+fi
 
 case "$CHOICE" in
     1)
@@ -90,11 +103,6 @@ case "$CHOICE" in
         echo "    ${CYAN}source ~/.zshrc${RESET}"
         echo "  Then:"
         echo "    ${CYAN}${NAME}${RESET} init"
-        ;;
-    *)
-        echo ""
-        echo "  ${YELLOW}Invalid choice. Defaulting to Mode 1.${RESET}"
-        echo "    ${CYAN}${DEST}/${NAME}${RESET} init"
         ;;
 esac
 
