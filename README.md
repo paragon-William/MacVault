@@ -1,6 +1,6 @@
 ![MacVault](macvault.jpeg)
 # MacVault
-# Bug Fix 1.0.18
+# Stable 1.0.18
 A portable encrypted file store for macOS. AES-256 at every layer. Zero trace when locked. Installs as an innocuous system utility — nothing about it suggests encryption at a glance.
 
 ## Install
@@ -79,8 +79,8 @@ mvs open → mvs show
   → manifest preserved for re-hide
 
 mvs hide
-  → shutil.move all tracked files back into mount (instant — same APFS volume)
-  → re-encrypts manifest
+  → cp -a all tracked files back into mount (cross‑device safe)
+  → re-encrypts manifest with openssl enc -aes-256-cbc -pbkdf2
 
 mvs close
   → re-encrypts manifest → hdiutil detach → removes temp mount
@@ -89,8 +89,8 @@ mvs close
 
 ## Security
 
-- **Dual-layer AES-256**: APFS image encryption + `openssl enc -aes-256-gcm` manifest encryption with authentication. Even when mounted, file paths are ciphertext.
-- **PBKDF2 key derivation**: 100,000 iterations of PBKDF2 for manifest key derivation.
+- **Dual-layer AES-256**: APFS image encryption (AES‑256) + `openssl enc -aes-256-cbc -pbkdf2` manifest encryption. Even when mounted, file paths are ciphertext.
+- **PBKDF2 key derivation**: The manifest passphrase is strengthened with PBKDF2 (default iterations) before encrypting.
 - **Atomic manifest writes**: Manifest is never overwritten in place — writes go to a temp file first, then atomically swapped to prevent corruption.
 - **Passphrase never stored**: Provided at runtime. No recovery — lose it, lose the data.
 - **No daemon, no root**: Runs only when invoked. No background processes.
