@@ -1,6 +1,6 @@
 ![MacVault](macvault.jpeg)
 # MacVault
-# Bug Fix 1.0.15
+# Bug Fix 1.0.18
 A portable encrypted file store for macOS. AES-256 at every layer. Zero trace when locked. Installs as an innocuous system utility — nothing about it suggests encryption at a glance.
 
 ## Install

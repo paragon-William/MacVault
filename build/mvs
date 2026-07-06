@@ -9,7 +9,7 @@ import urllib.request
 import ssl
 
 # ── Auto‑update constants ─────────────────────────────────
-VERSION = "1.0.17"
+VERSION = "1.0.18"
 UPDATE_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/mvs"
 VERSION_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/version.json"
 
@@ -67,7 +67,7 @@ def require_open():
 
 def manifest_path(mount): return os.path.join(mount, ".manifest.enc")
 
-# ── Manifest encryption (AES‑256‑CBC, PBKDF2, battle‑tested) ──
+# ── Manifest encryption (AES‑256‑CBC, PBKDF2) ─────────────
 def read_manifest(mount, passphrase):
     mp = manifest_path(mount)
     if not os.path.exists(mp): return {}
@@ -90,25 +90,29 @@ def write_manifest(mount, passphrase, data):
         input=plain.encode(), check=True)
     os.replace(tmp, mp)
 
-# ── Safe cross‑device move (copy + delete) ───────────────
+# ── Robust cross‑device move (cp + rm) ────────────────────
 def safe_move(src, dst):
-    """Move src to dst, handling cross‑device and permission errors."""
+    """Move a file or folder from src to dst, even across volumes."""
+    # First, try an atomic rename (works if same filesystem)
+    try:
+        os.rename(src, dst)
+        return
+    except OSError:
+        pass
+
+    # Copy and then delete the source
     try:
         if os.path.isdir(src):
-            shutil.copytree(src, dst, symlinks=True, ignore_dangling_symlinks=True,
-                           dirs_exist_ok=True, copy_function=shutil.copy2)
-            shutil.rmtree(src, ignore_errors=True)
+            subprocess.run(["cp", "-a", src, dst], check=True)
+            subprocess.run(["rm", "-rf", src], check=True)
         else:
-            shutil.copy2(src, dst)
-            os.unlink(src)
-    except Exception as e:
-        # If anything goes wrong, try to clean up and report
+            subprocess.run(["cp", "-a", src, dst], check=True)
+            subprocess.run(["rm", "-f", src], check=True)
+    except subprocess.CalledProcessError as e:
+        # If copy succeeded but delete failed, try to remove the destination
         if os.path.exists(dst):
-            if os.path.isdir(dst):
-                shutil.rmtree(dst, ignore_errors=True)
-            else:
-                os.unlink(dst)
-        die(f"Failed to move: {e}")
+            subprocess.run(["rm", "-rf", dst], check=False)
+        die(f"Move failed: {e}")
 
 # ── Core operations ───────────────────────────────────────
 def file_hash(path): return hashlib.sha256(str(path).encode()).hexdigest()[:16]
