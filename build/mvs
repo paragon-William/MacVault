@@ -6,9 +6,10 @@
 import argparse, hashlib, json, os, secrets, shutil, subprocess, sys, tempfile
 from pathlib import Path
 import urllib.request
+import traceback
 
 # ── Auto‑update constants ─────────────────────────────────
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 UPDATE_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/mvs"
 VERSION_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/version.json"
 
@@ -33,7 +34,7 @@ def getpass_verify(prompt="Passphrase: "):
     p1 = getpass.getpass(prompt)
     p2 = getpass.getpass("Confirm:   ")
     if p1 != p2: die("Passphrases do not match.")
-    if len(p1) < 8: die("Passphrase must be at least 9 characters.")
+    if len(p1) < 8: die("Passphrase must be at least 8 characters.")
     return p1
 
 def load_config():
@@ -67,19 +68,10 @@ def require_open():
 def manifest_path(mount): return os.path.join(mount, ".manifest.enc")
 
 # ── Crypto helpers ────────────────────────────────────────
-def openssl_version():
-    out = subprocess.run(["openssl", "version"], capture_output=True, text=True).stdout
-    parts = out.split()
-    if len(parts) >= 2:
-        ver = parts[1].split(".")
-        return tuple(int(x) for x in ver[:3])
-    return (1, 0, 0)
-
-def supports_argon2():
-    return openssl_version() >= (3, 2, 0)
-
 def derive_key(passphrase, salt, iterations=100000):
-    if supports_argon2():
+    """Derive a 256-bit key. Tries Argon2id first, falls back to PBKDF2."""
+    # Try Argon2id
+    try:
         out = subprocess.run(
             ["openssl", "kdf", "-keylen", "32", "-kdfopt", f"pass:{passphrase}",
              "-kdfopt", f"salt:{salt.hex()}", "-kdfopt", "iter:4",
@@ -87,13 +79,15 @@ def derive_key(passphrase, salt, iterations=100000):
              "-kdfopt", "type:id", "ARGON2ID"],
             capture_output=True, text=True, check=True)
         return bytes.fromhex(out.stdout.strip())
-    else:
-        out = subprocess.run(
-            ["openssl", "kdf", "-keylen", "32", "-kdfopt", f"pass:{passphrase}",
-             "-kdfopt", f"salt:{salt.hex()}", "-kdfopt", f"iter:{iterations}",
-             "PBKDF2"],
-            capture_output=True, text=True, check=True)
-        return bytes.fromhex(out.stdout.strip())
+    except (subprocess.CalledProcessError, ValueError):
+        pass  # fall through to PBKDF2
+    # PBKDF2 fallback (always works)
+    out = subprocess.run(
+        ["openssl", "kdf", "-keylen", "32", "-kdfopt", f"pass:{passphrase}",
+         "-kdfopt", f"salt:{salt.hex()}", "-kdfopt", f"iter:{iterations}",
+         "PBKDF2"],
+        capture_output=True, text=True, check=True)
+    return bytes.fromhex(out.stdout.strip())
 
 def encrypt_manifest(key, plaintext):
     nonce = secrets.token_bytes(12)
@@ -217,7 +211,6 @@ def hide_all(mount, manifest):
 
 # ── Auto‑update ───────────────────────────────────────────
 def parse_version(v: str):
-    """Parse a version string like '1.0.2' into a tuple of integers."""
     return tuple(int(x) for x in v.strip().split("."))
 
 def check_for_update():
@@ -230,7 +223,6 @@ def check_for_update():
         info(f"New version {remote_version} available. Updating...")
         with urllib.request.urlopen(UPDATE_URL, timeout=30) as resp:
             new_code = resp.read()
-        # Verify it's valid Python
         import ast
         ast.parse(new_code.decode())
         tmp = Path(str(SCRIPT) + ".new")
@@ -240,6 +232,8 @@ def check_for_update():
         ok(f"Updated to {remote_version}. Restarting...")
         os.execv(str(SCRIPT), sys.argv)
     except Exception:
+        # Silently ignore — but print to stderr if you want to debug
+        # print(f"[mvs] Update check failed: {traceback.format_exc()}", file=sys.stderr)
         pass
 
 # ── Commands ──────────────────────────────────────────────
