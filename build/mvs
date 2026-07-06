@@ -9,7 +9,7 @@ import urllib.request
 import ssl
 
 # ── Auto‑update constants ─────────────────────────────────
-VERSION = "1.0.7"
+VERSION = "1.0.8"
 UPDATE_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/mvs"
 VERSION_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/version.json"
 
@@ -218,26 +218,35 @@ def check_for_update():
         if os.path.exists(cp):
             os.environ["SSL_CERT_FILE"] = cp
             break
+
+    info("Checking for updates...")
+
     try:
         ctx = ssl.create_default_context()
         with urllib.request.urlopen(VERSION_URL, timeout=5, context=ctx) as resp:
             data = json.loads(resp.read().decode())
         remote_version = data.get("version", "0.0.0")
+
         if parse_version(remote_version) <= parse_version(VERSION):
+            ok(f"Up to date (v{VERSION})")
             return
+
         info(f"New version {remote_version} available. Updating...")
         with urllib.request.urlopen(UPDATE_URL, timeout=30, context=ctx) as resp:
             new_code = resp.read()
+
         import ast
         ast.parse(new_code.decode())
+
         tmp = Path(str(SCRIPT) + ".new")
         tmp.write_bytes(new_code)
         tmp.chmod(0o755)
         os.replace(tmp, SCRIPT)
         ok(f"Updated to {remote_version}. Restarting...")
         os.execv(str(SCRIPT), sys.argv)
-    except Exception:
-        pass
+
+    except Exception as e:
+        print(f"  {C['Y']}[!]{C['X']} Update check failed: {e}", file=sys.stderr)
 
 # ── Commands ──────────────────────────────────────────────
 def cmd_init(args):
