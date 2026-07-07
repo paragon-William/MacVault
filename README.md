@@ -7,7 +7,7 @@ A portable encrypted file store for macOS (and now Linux). AES‑256 at every la
 ## Install
 
 ~~~bash
-curl -sL https://raw.githubusercontent.com/paragon-William/MacVault/main/install.sh | bash
+curl -sL https://raw.githubusercontent.com/raxaid-William/MacVault/main/install.sh | bash
 ~~~
 
 ## Quick start
