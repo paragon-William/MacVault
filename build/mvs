@@ -10,8 +10,8 @@ import ssl
 
 # ── Auto‑update constants ─────────────────────────────────
 VERSION = "1.0.19"
-UPDATE_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/mvs"
-VERSION_URL = "https://raw.githubusercontent.com/paragon-William/MacVault/main/build/version.json"
+UPDATE_URL = "https://raw.githubusercontent.com/0xwi11iam/MacVault/main/build/mvs"
+VERSION_URL = "https://raw.githubusercontent.com/0xwi11iam/MacVault/main/build/version.json"
 
 SCRIPT = Path(__file__).resolve()
 BIN_NAME = "mvs"
