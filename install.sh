@@ -5,7 +5,7 @@
 # ============================================================
 set -euo pipefail
 
-REPO="https://github.com/paragon-William/MacVault.git"
+REPO="https://github.com/0xwi11iam/MacVault.git"
 DEST="${1:-$HOME/.local/bin}"
 NAME="${2:-mvs}"
 TMPDIR="$(mktemp -d /tmp/_macvault_XXXXXX)"
@@ -20,7 +20,7 @@ RESET="$(tput sgr0)"
 
 echo ""
 echo "  ${BOLD}${GREEN}MacVault Installer${RESET}"
-echo "  ${DIM}https://github.com/paragon-William/MacVault${RESET}"
+echo "  ${DIM}https://github.com/0xwi11iam/MacVault${RESET}"
 echo ""
 
 echo "  ${DIM}Cloning repository...${RESET}"
