@@ -1,11 +1,12 @@
 #!/bin/bash
 # ============================================================
 # MacVault — Bootstrap installer
-#   curl -sL https://raw.githubusercontent.com/paragon-William/MacVault/main/install.sh | bash
+#   curl -sL https://raw.githubusercontent.com/raxaid-William/MacVault/main/install.sh | bash
 # ============================================================
 set -euo pipefail
 
 REPO="https://github.com/0xwi11iam/MacVault.git"
+>>>>>>> Stashed changes
 DEST="${1:-$HOME/.local/bin}"
 NAME="${2:-mvs}"
 TMPDIR="$(mktemp -d /tmp/_macvault_XXXXXX)"
